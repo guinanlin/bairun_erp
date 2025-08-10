@@ -1,0 +1,117 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-08-10 20:55:24.489693",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "part_name",
+  "mold_fee",
+  "material",
+  "product_unit_weight",
+  "output_number",
+  "cycle_time",
+  "daily_output",
+  "processing_fee_per_day",
+  "raw_material_processing_fee",
+  "raw_material_price",
+  "product_material_price",
+  "product_injection_molding_price",
+  "process_station_config",
+  "total"
+ ],
+ "fields": [
+  {
+   "fieldname": "part_name",
+   "fieldtype": "Link",
+   "label": "\u96f6\u4ef6\u540d\u79f0",
+   "options": "Item"
+  },
+  {
+   "default": "0",
+   "fieldname": "mold_fee",
+   "fieldtype": "Currency",
+   "label": "\u6a21\u5177\u8d39"
+  },
+  {
+   "fieldname": "material",
+   "fieldtype": "Data",
+   "label": "\u6750\u8d28"
+  },
+  {
+   "fieldname": "product_unit_weight",
+   "fieldtype": "Float",
+   "label": "\u4ea7\u54c1\u5355\u91cd(g)"
+  },
+  {
+   "fieldname": "output_number",
+   "fieldtype": "Int",
+   "label": "\u51fa\u6570"
+  },
+  {
+   "fieldname": "cycle_time",
+   "fieldtype": "Float",
+   "label": "\u5468\u671f"
+  },
+  {
+   "fieldname": "daily_output",
+   "fieldtype": "Float",
+   "label": "\u4ea7\u91cf/\u5929",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processing_fee_per_day",
+   "fieldtype": "Currency",
+   "label": "\u52a0\u5de5\u8d39/\u5929"
+  },
+  {
+   "fieldname": "raw_material_processing_fee",
+   "fieldtype": "Currency",
+   "label": "\u6bdb\u576f\u52a0\u5de5\u8d39",
+   "read_only": 1
+  },
+  {
+   "fieldname": "raw_material_price",
+   "fieldtype": "Currency",
+   "label": "\u539f\u6750\u6599\u4ef7\u683c"
+  },
+  {
+   "fieldname": "product_material_price",
+   "fieldtype": "Currency",
+   "label": "\u4ea7\u54c1\u6750\u6599\u4ef7\u683c",
+   "read_only": 1
+  },
+  {
+   "fieldname": "product_injection_molding_price",
+   "fieldtype": "Currency",
+   "label": "\u4ea7\u54c1\u6ce8\u5851\u4ef7\u683c",
+   "read_only": 1
+  },
+  {
+   "fieldname": "process_station_config",
+   "fieldtype": "JSON",
+   "label": "\u5de5\u827a\u5de5\u4f4d\u914d\u7f6e"
+  },
+  {
+   "fieldname": "total",
+   "fieldtype": "Currency",
+   "label": "\u5408\u8ba1",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-08-10 21:12:16.064755",
+ "modified_by": "Administrator",
+ "module": "Bairun Erp",
+ "name": "BR Quotation Details",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

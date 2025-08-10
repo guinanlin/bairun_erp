@@ -1,0 +1,73 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-08-10 20:17:12.966003",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "operation_name",
+  "station1",
+  "station2",
+  "station3",
+  "station4",
+  "station5"
+ ],
+ "fields": [
+  {
+   "fieldname": "operation_name",
+   "fieldtype": "Data",
+   "label": "工序名称"
+  },
+  {
+   "fieldname": "station1",
+   "fieldtype": "Float",
+   "label": "1工位"
+  },
+  {
+   "fieldname": "station2",
+   "fieldtype": "Float",
+   "label": "2工位"
+  },
+  {
+   "fieldname": "station3",
+   "fieldtype": "Float",
+   "label": "3工位"
+  },
+  {
+   "fieldname": "station4",
+   "fieldtype": "Float",
+   "label": "4工位"
+  },
+  {
+   "fieldname": "station5",
+   "fieldtype": "Float",
+   "label": "5工位"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-08-10 20:19:24.651132",
+ "modified_by": "Administrator",
+ "module": "Bairun Erp",
+ "name": "BR Operation Station Config",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

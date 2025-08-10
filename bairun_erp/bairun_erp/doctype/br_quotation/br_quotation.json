@@ -1,0 +1,115 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-08-10 20:44:53.787452",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "customer_name",
+  "profit",
+  "including_tax",
+  "total_price_excluding_tax",
+  "column_break_nqqo",
+  "quotation_version",
+  "quotation_date",
+  "quotation_validity_period",
+  "section_break_8aug",
+  "details",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "customer_name",
+   "fieldtype": "Link",
+   "label": "\u5ba2\u6237\u540d\u79f0",
+   "options": "Customer",
+   "placeholder": "\u70b9\u51fb\u6b64\u5904\u9009\u62e9\u5ba2\u6237"
+  },
+  {
+   "default": "Today",
+   "fieldname": "quotation_date",
+   "fieldtype": "Date",
+   "label": "\u62a5\u4ef7\u65e5\u671f"
+  },
+  {
+   "fieldname": "quotation_version",
+   "fieldtype": "Data",
+   "label": "\u62a5\u4ef7\u7684\u7248\u672c"
+  },
+  {
+   "description": "\u5929",
+   "fieldname": "quotation_validity_period",
+   "fieldtype": "Int",
+   "label": "\u62a5\u4ef7\u6709\u6548\u671f",
+   "placeholder": "\u8f93\u5165\u5929\u6570"
+  },
+  {
+   "fieldname": "profit",
+   "fieldtype": "Currency",
+   "label": "\u5229\u6da6"
+  },
+  {
+   "default": "0",
+   "fieldname": "including_tax",
+   "fieldtype": "Check",
+   "label": "\u542b\u7a0e"
+  },
+  {
+   "fieldname": "total_price_excluding_tax",
+   "fieldtype": "Currency",
+   "label": "\u4e0d\u542b\u7a0e\u4ef7\u683c\u5408\u8ba1"
+  },
+  {
+   "fieldname": "section_break_8aug",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_nqqo",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "details",
+   "fieldtype": "Table",
+   "label": "details",
+   "options": "BR Quotation Details"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "BR Quotation",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2025-08-10 21:00:36.520961",
+ "modified_by": "Administrator",
+ "module": "Bairun Erp",
+ "name": "BR Quotation",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
