@@ -5,19 +5,42 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "section_break_basic_info",
+  "quotation_number",
   "customer_name",
-  "profit",
-  "including_tax",
-  "total_price_excluding_tax",
-  "column_break_nqqo",
-  "quotation_version",
   "quotation_date",
-  "quotation_validity_period",
-  "section_break_8aug",
+  "validity_period",
+  "include_tax",
+  "tax_rate",
+  "profit_rate",
+  "show_full_name",
+  "column_break_biud",
+  "uploaded_image",
+  "material_config",
+  "section_break_global_settings",
+  "total_mold_cost",
+  "total_cost",
+  "item_count",
+  "column_break_summary",
+  "total_quotation",
+  "total_profit",
+  "section_break_summary",
+  "version_id",
+  "version_name",
+  "column_break_fdyn",
+  "active_version_id",
+  "total_versions",
+  "section_break_version",
   "details",
   "amended_from"
  ],
  "fields": [
+  {
+   "fieldname": "quotation_number",
+   "fieldtype": "Data",
+   "label": "\u62a5\u4ef7\u5355\u53f7",
+   "read_only": 1
+  },
   {
    "fieldname": "customer_name",
    "fieldtype": "Link",
@@ -32,40 +55,123 @@
    "label": "\u62a5\u4ef7\u65e5\u671f"
   },
   {
-   "fieldname": "quotation_version",
-   "fieldtype": "Data",
-   "label": "\u62a5\u4ef7\u7684\u7248\u672c"
-  },
-  {
    "description": "\u5929",
-   "fieldname": "quotation_validity_period",
+   "fieldname": "validity_period",
    "fieldtype": "Int",
    "label": "\u62a5\u4ef7\u6709\u6548\u671f",
    "placeholder": "\u8f93\u5165\u5929\u6570"
   },
   {
-   "fieldname": "profit",
-   "fieldtype": "Currency",
-   "label": "\u5229\u6da6"
+   "fieldname": "section_break_basic_info",
+   "fieldtype": "Section Break",
+   "label": "\u62a5\u4ef7\u57fa\u672c\u4fe1\u606f"
   },
   {
    "default": "0",
-   "fieldname": "including_tax",
+   "fieldname": "include_tax",
    "fieldtype": "Check",
    "label": "\u542b\u7a0e"
   },
   {
-   "fieldname": "total_price_excluding_tax",
+   "default": "13",
+   "fieldname": "tax_rate",
+   "fieldtype": "Percent",
+   "label": "\u7a0e\u7387"
+  },
+  {
+   "default": "25.35",
+   "fieldname": "profit_rate",
+   "fieldtype": "Percent",
+   "label": "\u5229\u6da6\u7387"
+  },
+  {
+   "default": "0",
+   "fieldname": "show_full_name",
+   "fieldtype": "Check",
+   "label": "\u663e\u793a\u5168\u79f0"
+  },
+  {
+   "fieldname": "uploaded_image",
+   "fieldtype": "Attach",
+   "label": "\u4e0a\u4f20\u56fe\u7247"
+  },
+  {
+   "fieldname": "material_config",
+   "fieldtype": "JSON",
+   "label": "\u6750\u6599\u914d\u7f6e"
+  },
+  {
+   "fieldname": "section_break_global_settings",
+   "fieldtype": "Section Break",
+   "label": "\u5168\u5c40\u8bbe\u7f6e"
+  },
+  {
+   "fieldname": "total_mold_cost",
    "fieldtype": "Currency",
-   "label": "\u4e0d\u542b\u7a0e\u4ef7\u683c\u5408\u8ba1"
+   "label": "\u603b\u6a21\u5177\u8d39",
+   "read_only": 1
   },
   {
-   "fieldname": "section_break_8aug",
-   "fieldtype": "Section Break"
+   "fieldname": "total_cost",
+   "fieldtype": "Currency",
+   "label": "\u603b\u6210\u672c",
+   "read_only": 1
   },
   {
-   "fieldname": "column_break_nqqo",
+   "fieldname": "total_quotation",
+   "fieldtype": "Currency",
+   "label": "\u603b\u62a5\u4ef7",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_profit",
+   "fieldtype": "Currency",
+   "label": "\u603b\u5229\u6da6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_count",
+   "fieldtype": "Int",
+   "label": "\u9879\u76ee\u6570\u91cf",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_summary",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_summary",
+   "fieldtype": "Section Break",
+   "label": "\u6c47\u603b\u4fe1\u606f"
+  },
+  {
+   "default": "V0",
+   "fieldname": "version_id",
+   "fieldtype": "Data",
+   "label": "\u7248\u672cID"
+  },
+  {
+   "default": "V0",
+   "fieldname": "version_name",
+   "fieldtype": "Data",
+   "label": "\u7248\u672c\u540d\u79f0"
+  },
+  {
+   "default": "V0",
+   "fieldname": "active_version_id",
+   "fieldtype": "Data",
+   "label": "\u6d3b\u52a8\u7248\u672cID"
+  },
+  {
+   "default": "1",
+   "fieldname": "total_versions",
+   "fieldtype": "Int",
+   "label": "\u603b\u7248\u672c\u6570"
+  },
+  {
+   "fieldname": "section_break_version",
+   "fieldtype": "Section Break",
+   "label": "\u660e\u7ec6"
   },
   {
    "fieldname": "details",
@@ -82,13 +188,21 @@
    "print_hide": 1,
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "column_break_biud",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_fdyn",
+   "fieldtype": "Column Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-08-10 21:00:36.520961",
+ "modified": "2025-08-12 06:22:53.911546",
  "modified_by": "Administrator",
  "module": "Bairun Erp",
  "name": "BR Quotation",

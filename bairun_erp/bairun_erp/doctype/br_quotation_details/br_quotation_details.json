@@ -7,97 +7,127 @@
  "engine": "InnoDB",
  "field_order": [
   "part_name",
-  "mold_fee",
+  "full_name",
   "material",
-  "product_unit_weight",
-  "output_number",
-  "cycle_time",
-  "daily_output",
-  "processing_fee_per_day",
-  "raw_material_processing_fee",
+  "process_type",
+  "unit_weight",
+  "output",
+  "cycle",
+  "daily_production",
+  "mold_cost",
+  "daily_processing_fee",
+  "blank_processing_fee",
   "raw_material_price",
   "product_material_price",
-  "product_injection_molding_price",
-  "process_station_config",
-  "total"
+  "injection_price",
+  "cost_total",
+  "quotation_total",
+  "profit",
+  "selected_processes",
+  "process_workstations"
  ],
  "fields": [
   {
    "fieldname": "part_name",
-   "fieldtype": "Link",
-   "label": "\u96f6\u4ef6\u540d\u79f0",
-   "options": "Item"
+   "fieldtype": "Data",
+   "label": "零件名称"
   },
   {
-   "default": "0",
-   "fieldname": "mold_fee",
-   "fieldtype": "Currency",
-   "label": "\u6a21\u5177\u8d39"
+   "fieldname": "full_name",
+   "fieldtype": "Data",
+   "label": "全称"
   },
   {
    "fieldname": "material",
    "fieldtype": "Data",
-   "label": "\u6750\u8d28"
+   "label": "材质"
   },
   {
-   "fieldname": "product_unit_weight",
+   "fieldname": "process_type",
+   "fieldtype": "JSON",
+   "label": "工艺"
+  },
+  {
+   "fieldname": "unit_weight",
    "fieldtype": "Float",
-   "label": "\u4ea7\u54c1\u5355\u91cd(g)"
+   "label": "单重(g)"
   },
   {
-   "fieldname": "output_number",
+   "fieldname": "output",
    "fieldtype": "Int",
-   "label": "\u51fa\u6570"
+   "label": "出数"
   },
   {
-   "fieldname": "cycle_time",
+   "fieldname": "cycle",
    "fieldtype": "Float",
-   "label": "\u5468\u671f"
+   "label": "周期"
   },
   {
-   "fieldname": "daily_output",
+   "fieldname": "daily_production",
    "fieldtype": "Float",
-   "label": "\u4ea7\u91cf/\u5929",
+   "label": "日产量",
    "read_only": 1
   },
   {
-   "fieldname": "processing_fee_per_day",
+   "fieldname": "mold_cost",
    "fieldtype": "Currency",
-   "label": "\u52a0\u5de5\u8d39/\u5929"
+   "label": "模具费"
   },
   {
-   "fieldname": "raw_material_processing_fee",
+   "fieldname": "daily_processing_fee",
    "fieldtype": "Currency",
-   "label": "\u6bdb\u576f\u52a0\u5de5\u8d39",
+   "label": "日加工费"
+  },
+  {
+   "fieldname": "blank_processing_fee",
+   "fieldtype": "Currency",
+   "label": "毛坯加工费",
    "read_only": 1
   },
   {
    "fieldname": "raw_material_price",
    "fieldtype": "Currency",
-   "label": "\u539f\u6750\u6599\u4ef7\u683c"
+   "label": "原材料价格"
   },
   {
    "fieldname": "product_material_price",
    "fieldtype": "Currency",
-   "label": "\u4ea7\u54c1\u6750\u6599\u4ef7\u683c",
+   "label": "产品材料价格",
    "read_only": 1
   },
   {
-   "fieldname": "product_injection_molding_price",
+   "fieldname": "injection_price",
    "fieldtype": "Currency",
-   "label": "\u4ea7\u54c1\u6ce8\u5851\u4ef7\u683c",
+   "label": "注塑价格",
    "read_only": 1
   },
   {
-   "fieldname": "process_station_config",
+   "fieldname": "cost_total",
+   "fieldtype": "Currency",
+   "label": "成本合计",
+   "read_only": 1
+  },
+  {
+   "fieldname": "quotation_total",
+   "fieldtype": "Currency",
+   "label": "报价合计",
+   "read_only": 1
+  },
+  {
+   "fieldname": "profit",
+   "fieldtype": "Currency",
+   "label": "利润",
+   "default": 0
+  },
+  {
+   "fieldname": "selected_processes",
    "fieldtype": "JSON",
-   "label": "\u5de5\u827a\u5de5\u4f4d\u914d\u7f6e"
+   "label": "选中工艺"
   },
   {
-   "fieldname": "total",
-   "fieldtype": "Currency",
-   "label": "\u5408\u8ba1",
-   "read_only": 1
+   "fieldname": "process_workstations",
+   "fieldtype": "JSON",
+   "label": "工艺工位配置"
   }
  ],
  "grid_page_length": 50,
