@@ -1,0 +1,52 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-08-19 01:24:05.124695",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "quotation_number",
+  "customer_name"
+ ],
+ "fields": [
+  {
+   "fieldname": "quotation_number",
+   "fieldtype": "Data",
+   "label": "\u62a5\u4ef7\u5355\u53f7",
+   "unique": 1
+  },
+  {
+   "fieldname": "customer_name",
+   "fieldtype": "Link",
+   "label": "\u5ba2\u6237\u540d\u79f0",
+   "options": "Customer",
+   "placeholder": "\u70b9\u51fb\u6b64\u5904\u9009\u62e9\u5ba2\u6237"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-08-19 01:51:06.863661",
+ "modified_by": "Administrator",
+ "module": "Bairun Erp",
+ "name": "BR Customer Quotation",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
