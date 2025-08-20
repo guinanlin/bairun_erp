@@ -7,7 +7,51 @@ from frappe import _
 
 
 class BRQuotation(Document):
-	pass
+	def after_insert(self):
+		"""插入后处理 - 同步保存到客户报价单"""
+		self._sync_to_customer_quotation()
+	
+	def on_update(self):
+		"""更新后处理 - 同步保存到客户报价单"""
+		self._sync_to_customer_quotation()
+	
+	def _sync_to_customer_quotation(self):
+		"""同步保存到客户报价单"""
+		try:
+			# 检查报价单号和客户名称是否存在
+			if not self.quotation_number or not self.customer_name:
+				print(f"[DEBUG] 报价单号或客户名称为空，跳过同步")
+				return
+			
+			# 检查是否已存在相同的报价单号
+			existing_customer_quotation = frappe.db.exists(
+				"BR Customer Quotation", 
+				{"quotation_number": self.quotation_number}
+			)
+			
+			if existing_customer_quotation:
+				print(f"[DEBUG] 报价单号 {self.quotation_number} 已存在于客户报价单中，更新产品名称")
+				# 更新现有的客户报价单
+				customer_quotation_doc = frappe.get_doc("BR Customer Quotation", existing_customer_quotation)
+				customer_quotation_doc.product_name = self.product_name
+				customer_quotation_doc.save(ignore_permissions=True)
+				print(f"[DEBUG] 成功更新客户报价单 {self.quotation_number} 的产品名称")
+				return
+			
+			# 创建新的客户报价单
+			customer_quotation_doc = frappe.get_doc({
+				"doctype": "BR Customer Quotation",
+				"quotation_number": self.quotation_number,
+				"customer_name": self.customer_name,
+				"product_name": self.product_name
+			})
+			
+			customer_quotation_doc.insert(ignore_permissions=True)
+			print(f"[DEBUG] 成功同步报价单 {self.quotation_number} 到客户报价单")
+			
+		except Exception as e:
+			print(f"[DEBUG] 同步到客户报价单失败: {str(e)}")
+			frappe.log_error(f"同步报价单到客户报价单失败: {str(e)}", "BR Quotation Sync Error")
 
 
 def build_order_clause(order_by, order_direction, valid_fields):
@@ -57,12 +101,15 @@ def build_order_clause(order_by, order_direction, valid_fields):
 def get_quotation_list(page=1, page_size=20, filters=None, order_by="creation", order_direction="desc"):
 	"""
 	获取报价单列表，支持分页
+	新的数据层级结构：
+	BR Customer Quotation → BR Quotation → BR Quotation Details
+	
 	:param page: 页码，从1开始
 	:param page_size: 每页数量
 	:param filters: 过滤条件
 	:param order_by: 排序字段，支持多字段排序，如 "quotation_date,creation"
 	:param order_direction: 排序方向 (asc/desc)，支持多方向，如 "desc,asc"
-	:return: 包含报价单列表和分页信息的字典
+	:return: 包含客户报价单列表和分页信息的字典
 	"""
 	print(f"[DEBUG] get_quotation_list 开始执行")
 	print(f"[DEBUG] 参数: page={page}, page_size={page_size}, filters={filters}, order_by={order_by}, order_direction={order_direction}")
@@ -78,7 +125,7 @@ def get_quotation_list(page=1, page_size=20, filters=None, order_by="creation", 
 		offset = (int(page) - 1) * int(page_size)
 		print(f"[DEBUG] 分页参数: offset={offset}, page_size={page_size}")
 		
-		# 构建查询条件
+		# 构建查询条件 - 从BR Customer Quotation开始
 		conditions = "WHERE 1=1"
 		params = []
 		
@@ -90,61 +137,125 @@ def get_quotation_list(page=1, page_size=20, filters=None, order_by="creation", 
 			params.append(f"%{filters['customer_name']}%")
 			print(f"[DEBUG] 添加客户名称过滤: {filters['customer_name']}")
 		
-		if filters.get('quotation_date_from'):
-			conditions += " AND quotation_date >= %s"
-			params.append(filters['quotation_date_from'])
-			print(f"[DEBUG] 添加日期开始过滤: {filters['quotation_date_from']}")
+		if filters.get('product_name'):
+			conditions += " AND product_name LIKE %s"
+			params.append(f"%{filters['product_name']}%")
+			print(f"[DEBUG] 添加产品名称过滤: {filters['product_name']}")
 		
-		if filters.get('quotation_date_to'):
-			conditions += " AND quotation_date <= %s"
-			params.append(filters['quotation_date_to'])
-			print(f"[DEBUG] 添加日期结束过滤: {filters['quotation_date_to']}")
-		
-		if filters.get('status'):
-			conditions += " AND docstatus = %s"
-			params.append(filters['status'])
-			print(f"[DEBUG] 添加状态过滤: {filters['status']}")
+		if filters.get('quotation_number'):
+			conditions += " AND quotation_number LIKE %s"
+			params.append(f"%{filters['quotation_number']}%")
+			print(f"[DEBUG] 添加报价单号过滤: {filters['quotation_number']}")
 		
 		print(f"[DEBUG] 查询条件: {conditions}")
 		print(f"[DEBUG] 查询参数: {params}")
 		
 		# 验证并构建排序条件
 		valid_order_fields = [
-			'name', 'quotation_number', 'customer_name', 'quotation_date', 
-			'validity_period', 'total_mold_cost', 'total_cost', 'total_quotation',
-			'total_profit', 'item_count', 'version_id', 'creation', 'modified'
+			'name', 'quotation_number', 'customer_name', 'product_name', 'creation', 'modified'
 		]
 		
 		order_clause = build_order_clause(order_by, order_direction, valid_order_fields)
 		print(f"[DEBUG] 排序子句: {order_clause}")
 		
-		# 查询总数
+		# 查询客户报价单总数
 		count_sql = f"""
 			SELECT COUNT(*) as total
-			FROM `tabBR Quotation`
+			FROM `tabBR Customer Quotation`
 			{conditions}
 		"""
 		print(f"[DEBUG] 总数查询SQL: {count_sql}")
 		print(f"[DEBUG] 总数查询参数: {params}")
 		
 		total_count = frappe.db.sql(count_sql, params, as_dict=True)[0]['total']
-		print(f"[DEBUG] 查询到的总数: {total_count}")
+		print(f"[DEBUG] 查询到的客户报价单总数: {total_count}")
 		
 		# 如果没有数据，先检查表是否存在数据
 		if total_count == 0:
-			print(f"[DEBUG] 没有找到数据，检查表结构...")
-			check_sql = "SELECT COUNT(*) as total FROM `tabBR Quotation`"
+			print(f"[DEBUG] 没有找到客户报价单数据，检查表结构...")
+			check_sql = "SELECT COUNT(*) as total FROM `tabBR Customer Quotation`"
 			all_count = frappe.db.sql(check_sql, as_dict=True)[0]['total']
-			print(f"[DEBUG] 表中总记录数: {all_count}")
+			print(f"[DEBUG] 客户报价单表中总记录数: {all_count}")
 			
 			if all_count > 0:
 				print(f"[DEBUG] 表中有数据，但查询条件可能有问题")
-				sample_sql = "SELECT name, quotation_number, customer_name FROM `tabBR Quotation` LIMIT 5"
+				sample_sql = "SELECT name, quotation_number, customer_name, product_name FROM `tabBR Customer Quotation` LIMIT 5"
 				sample_data = frappe.db.sql(sample_sql, as_dict=True)
 				print(f"[DEBUG] 样本数据: {sample_data}")
 		
-		# 查询报价单列表
-		quotation_sql = f"""
+		# 查询客户报价单列表
+		customer_quotation_sql = f"""
+			SELECT 
+				name,
+				quotation_number,
+				customer_name,
+				product_name,
+				creation,
+				modified
+			FROM `tabBR Customer Quotation`
+			{conditions}
+			{order_clause}
+			LIMIT %s OFFSET %s
+		"""
+		params.extend([int(page_size), offset])
+		
+		print(f"[DEBUG] 客户报价单查询SQL: {customer_quotation_sql}")
+		print(f"[DEBUG] 客户报价单查询参数: {params}")
+		
+		customer_quotations = frappe.db.sql(customer_quotation_sql, params, as_dict=True)
+		print(f"[DEBUG] 查询到的客户报价单数量: {len(customer_quotations)}")
+		print(f"[DEBUG] 客户报价单数据: {customer_quotations}")
+		
+		# 获取每个客户报价单的版本信息
+		print(f"[DEBUG] 开始获取版本数据")
+		for i, customer_quotation in enumerate(customer_quotations):
+			print(f"[DEBUG] 处理第 {i+1} 个客户报价单: {customer_quotation.get('quotation_number', 'N/A')}")
+			
+			# 获取该报价单号的所有版本
+			versions = get_quotation_versions(customer_quotation['quotation_number'])
+			customer_quotation['versions'] = versions
+			print(f"[DEBUG] 客户报价单 {customer_quotation.get('quotation_number', 'N/A')} 的版本数量: {len(versions)}")
+		
+		# 计算分页信息
+		total_pages = (total_count + int(page_size) - 1) // int(page_size)
+		print(f"[DEBUG] 分页信息: total_pages={total_pages}")
+		
+		result = {
+			'status': 'success',
+			'data': {
+				'customer_quotations': customer_quotations,
+				'pagination': {
+					'current_page': int(page),
+					'page_size': int(page_size),
+					'total_count': total_count,
+					'total_pages': total_pages,
+					'has_next': int(page) < total_pages,
+					'has_prev': int(page) > 1
+				}
+			}
+		}
+		
+		print(f"[DEBUG] 返回结果: {result}")
+		return result
+		
+	except Exception as e:
+		print(f"[DEBUG] 发生异常: {str(e)}")
+		frappe.log_error(f"获取客户报价单列表失败: {str(e)}", "BR Customer Quotation API Error")
+		return {
+			'status': 'error',
+			'message': f'获取客户报价单列表失败: {str(e)}'
+		}
+
+
+def get_quotation_versions(quotation_number):
+	"""
+	获取指定报价单号的所有版本
+	:param quotation_number: 报价单号
+	:return: 版本列表
+	"""
+	print(f"[DEBUG] get_quotation_versions 开始执行，报价单号: {quotation_number}")
+	try:
+		versions_sql = """
 			SELECT 
 				name,
 				quotation_number,
@@ -170,55 +281,30 @@ def get_quotation_list(page=1, page_size=20, filters=None, order_by="creation", 
 				creation,
 				modified
 			FROM `tabBR Quotation`
-			{conditions}
-			{order_clause}
-			LIMIT %s OFFSET %s
+			WHERE quotation_number = %s
+			ORDER BY version_id, creation DESC
 		"""
-		params.extend([int(page_size), offset])
 		
-		print(f"[DEBUG] 报价单查询SQL: {quotation_sql}")
-		print(f"[DEBUG] 报价单查询参数: {params}")
+		print(f"[DEBUG] 版本查询SQL: {versions_sql}")
+		print(f"[DEBUG] 版本查询参数: {quotation_number}")
 		
-		quotations = frappe.db.sql(quotation_sql, params, as_dict=True)
-		print(f"[DEBUG] 查询到的报价单数量: {len(quotations)}")
-		print(f"[DEBUG] 报价单数据: {quotations}")
+		versions = frappe.db.sql(versions_sql, (quotation_number,), as_dict=True)
+		print(f"[DEBUG] 查询到的版本数量: {len(versions)}")
+		print(f"[DEBUG] 版本数据: {versions}")
 		
-		# 获取每个报价单的明细行
-		print(f"[DEBUG] 开始获取明细行数据")
-		for i, quotation in enumerate(quotations):
-			print(f"[DEBUG] 处理第 {i+1} 个报价单: {quotation.get('name', 'N/A')}")
-			quotation['details'] = get_quotation_details(quotation['name'])
-			print(f"[DEBUG] 报价单 {quotation.get('name', 'N/A')} 的明细行数量: {len(quotation['details'])}")
+		# 获取每个版本的明细行
+		print(f"[DEBUG] 开始获取版本明细行数据")
+		for i, version in enumerate(versions):
+			print(f"[DEBUG] 处理第 {i+1} 个版本: {version.get('name', 'N/A')}")
+			version['details'] = get_quotation_details(version['name'])
+			print(f"[DEBUG] 版本 {version.get('name', 'N/A')} 的明细行数量: {len(version['details'])}")
 		
-		# 计算分页信息
-		total_pages = (total_count + int(page_size) - 1) // int(page_size)
-		print(f"[DEBUG] 分页信息: total_pages={total_pages}")
-		
-		result = {
-			'status': 'success',
-			'data': {
-				'quotations': quotations,
-				'pagination': {
-					'current_page': int(page),
-					'page_size': int(page_size),
-					'total_count': total_count,
-					'total_pages': total_pages,
-					'has_next': int(page) < total_pages,
-					'has_prev': int(page) > 1
-				}
-			}
-		}
-		
-		print(f"[DEBUG] 返回结果: {result}")
-		return result
+		return versions
 		
 	except Exception as e:
-		print(f"[DEBUG] 发生异常: {str(e)}")
-		frappe.log_error(f"获取报价单列表失败: {str(e)}", "BR Quotation API Error")
-		return {
-			'status': 'error',
-			'message': f'获取报价单列表失败: {str(e)}'
-		}
+		print(f"[DEBUG] get_quotation_versions 发生异常: {str(e)}")
+		frappe.log_error(f"获取报价单版本失败: {str(e)}", "BR Quotation Versions API Error")
+		return []
 
 
 def get_quotation_details(quotation_name):
