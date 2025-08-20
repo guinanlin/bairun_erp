@@ -131,6 +131,9 @@ def get_quotation_list(page=1, page_size=20, filters=None, order_by="creation", 
 		
 		print(f"[DEBUG] 开始构建查询条件")
 		
+		# 检查是否需要按版本号过滤
+		version_filter = filters.get('version_id')
+		
 		# 添加过滤条件
 		if filters.get('customer_name'):
 			conditions += " AND customer_name LIKE %s"
@@ -147,6 +150,82 @@ def get_quotation_list(page=1, page_size=20, filters=None, order_by="creation", 
 			params.append(f"%{filters['quotation_number']}%")
 			print(f"[DEBUG] 添加报价单号过滤: {filters['quotation_number']}")
 		
+		# 如果按版本号过滤，需要特殊处理
+		if version_filter:
+			print(f"[DEBUG] 添加版本号过滤: {version_filter}")
+			
+			# 如果同时指定了报价单号，则在该报价单的版本中过滤
+			if filters.get('quotation_number'):
+				print(f"[DEBUG] 同时指定了报价单号，将在该报价单的版本中过滤")
+				# 检查该报价单是否有指定版本
+				version_check_sql = """
+					SELECT COUNT(*) as count
+					FROM `tabBR Quotation` 
+					WHERE quotation_number = %s AND version_id LIKE %s
+				"""
+				version_check_params = [filters['quotation_number'], f"%{version_filter}%"]
+				print(f"[DEBUG] 版本检查SQL: {version_check_sql}")
+				print(f"[DEBUG] 版本检查参数: {version_check_params}")
+				
+				version_count = frappe.db.sql(version_check_sql, version_check_params, as_dict=True)[0]['count']
+				print(f"[DEBUG] 该报价单中符合版本号的数量: {version_count}")
+				
+				if version_count == 0:
+					# 如果该报价单没有指定版本，返回空结果
+					print(f"[DEBUG] 该报价单没有指定版本，返回空结果")
+					return {
+						'status': 'success',
+						'data': {
+							'customer_quotations': [],
+							'pagination': {
+								'current_page': int(page),
+								'page_size': int(page_size),
+								'total_count': 0,
+								'total_pages': 0,
+								'has_next': False,
+								'has_prev': False
+							}
+						}
+					}
+			else:
+				# 如果没有指定报价单号，查询所有符合版本号条件的报价单号
+				version_sql = """
+					SELECT DISTINCT quotation_number 
+					FROM `tabBR Quotation` 
+					WHERE version_id LIKE %s
+				"""
+				version_params = [f"%{version_filter}%"]
+				print(f"[DEBUG] 版本查询SQL: {version_sql}")
+				print(f"[DEBUG] 版本查询参数: {version_params}")
+				
+				version_results = frappe.db.sql(version_sql, version_params, as_dict=True)
+				quotation_numbers = [row['quotation_number'] for row in version_results]
+				print(f"[DEBUG] 符合版本号的报价单号: {quotation_numbers}")
+				
+				if quotation_numbers:
+					# 构建 IN 查询条件
+					placeholders = ','.join(['%s'] * len(quotation_numbers))
+					conditions += f" AND quotation_number IN ({placeholders})"
+					params.extend(quotation_numbers)
+					print(f"[DEBUG] 添加版本号过滤条件: quotation_number IN ({placeholders})")
+				else:
+					# 如果没有找到符合版本号的报价单，返回空结果
+					print(f"[DEBUG] 没有找到符合版本号的报价单，返回空结果")
+					return {
+						'status': 'success',
+						'data': {
+							'customer_quotations': [],
+							'pagination': {
+								'current_page': int(page),
+								'page_size': int(page_size),
+								'total_count': 0,
+								'total_pages': 0,
+								'has_next': False,
+								'has_prev': False
+							}
+						}
+					}
+		
 		print(f"[DEBUG] 查询条件: {conditions}")
 		print(f"[DEBUG] 查询参数: {params}")
 		
@@ -155,7 +234,15 @@ def get_quotation_list(page=1, page_size=20, filters=None, order_by="creation", 
 			'name', 'quotation_number', 'customer_name', 'product_name', 'creation', 'modified'
 		]
 		
-		order_clause = build_order_clause(order_by, order_direction, valid_order_fields)
+		# 检查是否需要按版本号排序
+		if order_by and 'version_id' in str(order_by):
+			print(f"[DEBUG] 检测到版本号排序需求，需要特殊处理")
+			# 对于版本号排序，我们需要在获取版本数据后进行排序
+			# 先使用默认排序获取数据
+			order_clause = "ORDER BY creation DESC"
+		else:
+			order_clause = build_order_clause(order_by, order_direction, valid_order_fields)
+		
 		print(f"[DEBUG] 排序子句: {order_clause}")
 		
 		# 查询客户报价单总数
@@ -213,8 +300,54 @@ def get_quotation_list(page=1, page_size=20, filters=None, order_by="creation", 
 			
 			# 获取该报价单号的所有版本
 			versions = get_quotation_versions(customer_quotation['quotation_number'])
+			
+			# 如果有版本号过滤，只保留符合条件的版本
+			if version_filter:
+				print(f"[DEBUG] 过滤版本，只保留版本号包含 '{version_filter}' 的版本")
+				filtered_versions = []
+				for version in versions:
+					if version_filter.lower() in version.get('version_id', '').lower():
+						filtered_versions.append(version)
+						print(f"[DEBUG] 保留版本: {version.get('version_id', 'N/A')}")
+					else:
+						print(f"[DEBUG] 过滤掉版本: {version.get('version_id', 'N/A')}")
+				
+				versions = filtered_versions
+				print(f"[DEBUG] 过滤后的版本数量: {len(versions)}")
+			
 			customer_quotation['versions'] = versions
 			print(f"[DEBUG] 客户报价单 {customer_quotation.get('quotation_number', 'N/A')} 的版本数量: {len(versions)}")
+		
+		# 如果需要按版本号排序，对客户报价单进行排序
+		if order_by and 'version_id' in str(order_by):
+			print(f"[DEBUG] 执行版本号排序")
+			# 解析排序参数
+			order_fields = [field.strip() for field in str(order_by).split(',')]
+			order_directions = [direction.strip() for direction in str(order_direction).split(',')]
+			
+			# 找到版本号排序的索引和方向
+			version_sort_index = None
+			version_sort_direction = 'desc'
+			
+			for i, field in enumerate(order_fields):
+				if field == 'version_id':
+					version_sort_index = i
+					if i < len(order_directions):
+						version_sort_direction = order_directions[i].lower()
+					break
+			
+			if version_sort_index is not None:
+				# 对客户报价单按版本号排序
+				def sort_by_version_id(item):
+					if not item.get('versions'):
+						return ''
+					# 获取第一个版本的版本号
+					first_version = item['versions'][0] if item['versions'] else {}
+					return first_version.get('version_id', '')
+				
+				reverse = version_sort_direction == 'desc'
+				customer_quotations.sort(key=sort_by_version_id, reverse=reverse)
+				print(f"[DEBUG] 版本号排序完成，方向: {version_sort_direction}")
 		
 		# 计算分页信息
 		total_pages = (total_count + int(page_size) - 1) // int(page_size)
