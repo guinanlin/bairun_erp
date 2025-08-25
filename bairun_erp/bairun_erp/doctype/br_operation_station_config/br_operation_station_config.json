@@ -10,44 +10,50 @@
   "station2",
   "station3",
   "station4",
-  "station5"
+  "station5",
+  "sequence_list"
  ],
  "fields": [
   {
    "fieldname": "operation_name",
    "fieldtype": "Data",
-   "label": "工序名称"
+   "label": "\u5de5\u5e8f\u540d\u79f0"
   },
   {
    "fieldname": "station1",
    "fieldtype": "Float",
-   "label": "1工位"
+   "label": "1\u5de5\u4f4d"
   },
   {
    "fieldname": "station2",
    "fieldtype": "Float",
-   "label": "2工位"
+   "label": "2\u5de5\u4f4d"
   },
   {
    "fieldname": "station3",
    "fieldtype": "Float",
-   "label": "3工位"
+   "label": "3\u5de5\u4f4d"
   },
   {
    "fieldname": "station4",
    "fieldtype": "Float",
-   "label": "4工位"
+   "label": "4\u5de5\u4f4d"
   },
   {
    "fieldname": "station5",
    "fieldtype": "Float",
-   "label": "5工位"
+   "label": "5\u5de5\u4f4d"
+  },
+  {
+   "fieldname": "sequence_list",
+   "fieldtype": "Int",
+   "label": "Sequence List"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-10 20:19:24.651132",
+ "modified": "2025-08-25 11:55:04.862907",
  "modified_by": "Administrator",
  "module": "Bairun Erp",
  "name": "BR Operation Station Config",
