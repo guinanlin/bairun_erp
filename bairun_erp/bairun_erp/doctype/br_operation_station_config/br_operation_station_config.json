@@ -1,5 +1,6 @@
 {
  "actions": [],
+ "allow_import": 1,
  "allow_rename": 1,
  "creation": "2025-08-10 20:17:12.966003",
  "doctype": "DocType",
@@ -53,7 +54,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-25 11:55:04.862907",
+ "modified": "2025-08-31 22:30:46.675676",
  "modified_by": "Administrator",
  "module": "Bairun Erp",
  "name": "BR Operation Station Config",

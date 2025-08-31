@@ -1,5 +1,6 @@
 {
  "actions": [],
+ "allow_import": 1,
  "allow_rename": 1,
  "creation": "2025-08-10 19:55:19.301352",
  "doctype": "DocType",
@@ -23,7 +24,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-10 20:02:18.957092",
+ "modified": "2025-08-31 22:31:04.804625",
  "modified_by": "Administrator",
  "module": "Bairun Erp",
  "name": "BR Parts Config",

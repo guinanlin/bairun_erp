@@ -1,5 +1,6 @@
 {
  "actions": [],
+ "allow_import": 1,
  "allow_rename": 1,
  "creation": "2025-08-10 20:11:27.948248",
  "doctype": "DocType",
@@ -23,7 +24,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-10 20:13:43.696391",
+ "modified": "2025-08-31 22:26:48.558984",
  "modified_by": "Administrator",
  "module": "Bairun Erp",
  "name": "BR Material Price List",

@@ -1,5 +1,6 @@
 {
  "actions": [],
+ "allow_import": 1,
  "allow_rename": 1,
  "autoname": "format:{quotation_number}",
  "creation": "2025-08-19 01:24:05.124695",
@@ -96,7 +97,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-29 03:16:33.265058",
+ "modified": "2025-08-31 22:30:26.197904",
  "modified_by": "Administrator",
  "module": "Bairun Erp",
  "name": "BR Customer Quotation",
