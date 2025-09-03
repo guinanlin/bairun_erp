@@ -18,6 +18,11 @@ class BRQuotation(Document):
 	def _sync_to_customer_quotation(self):
 		"""同步保存到客户报价单"""
 		try:
+			# 检查是否禁用同步
+			if hasattr(self, 'flags') and getattr(self.flags, 'disable_sync', False):
+				print(f"[DEBUG] 同步机制已禁用，跳过同步")
+				return
+			
 			# 检查报价单号和客户名称是否存在
 			if not self.quotation_number or not self.customer_name:
 				print(f"[DEBUG] 报价单号或客户名称为空，跳过同步")
@@ -510,30 +515,7 @@ def get_quotation_by_id(quotation_name):
 	try:
 		# 获取报价单主信息
 		quotation_sql = """
-			SELECT 
-				name,
-				quotation_number,
-				customer_name,
-				quotation_date,
-				validity_period,
-				include_tax,
-				tax_rate,
-				profit_rate,
-				show_full_name,
-				uploaded_image,
-				material_config,
-				total_mold_cost,
-				total_cost,
-				total_quotation,
-				total_profit,
-				item_count,
-				version_id,
-				version_name,
-				active_version_id,
-				total_versions,
-				docstatus,
-				creation,
-				modified
+			SELECT *
 			FROM `tabBR Quotation`
 			WHERE name = %s
 		"""
@@ -561,4 +543,39 @@ def get_quotation_by_id(quotation_name):
 		return {
 			'status': 'error',
 			'message': f'获取报价单详情失败: {str(e)}'
+		}
+
+
+@frappe.whitelist()
+def get_quotation_by_quotation_number(quotation_number):
+	"""
+	根据报价单号获取报价单信息
+	:param quotation_number: 报价单号（如：250902-853875）
+	:return: 报价单完整信息
+	"""
+	try:
+		# 先根据报价单号查找记录
+		quotation_sql = """
+			SELECT name FROM `tabBR Quotation`
+			WHERE quotation_number = %s
+			ORDER BY creation DESC
+			LIMIT 1
+		"""
+		
+		result = frappe.db.sql(quotation_sql, (quotation_number,), as_dict=True)
+		
+		if not result:
+			return {
+				'status': 'error',
+				'message': f'报价单号 {quotation_number} 不存在'
+			}
+		
+		# 使用找到的记录ID调用原来的方法
+		return get_quotation_by_id(result[0]['name'])
+		
+	except Exception as e:
+		frappe.log_error(f"根据报价单号获取报价单详情失败: {str(e)}", "BR Quotation API Error")
+		return {
+			'status': 'error',
+			'message': f'根据报价单号获取报价单详情失败: {str(e)}'
 		}
