@@ -33,6 +33,141 @@ def get_items_with_attributes(filters=None, fields=None, or_filters=None, order_
 
     return result
 
+
+@frappe.whitelist(allow_guest=False)
+def get_items_by_item_group_expanded_by_target_customers(item_group="成品", page_number=1, page_size=50):
+    """
+    按物料组获取该组下所有 BOM，以 BOM 为主线，每个 BOM 一条记录，支持分页：
+    - 支持多物料组：item_group 可为字符串（如 "成品"）或列表（如 ["成品", "半成品"]）
+    - 同一物料可有多个 BOM 版本，每个 BOM 对应一行，不按物料去重
+    - 供给客户：取物料的第一个供给客户（若有），用于展示
+
+    每行包含：BOM 编号、物料基础信息 + Item 自定义字段 + customer/customer_name。
+    分页、total_count 均按 BOM 维度计算。
+
+    分页参数：
+    - page_number: 页码，从 1 开始，默认 1
+    - page_size: 每页条数，默认 50，最大建议 500
+
+    返回：{ total_count, total_pages, page_number, page_size, data }
+    """
+    if not item_group:
+        return {"error": _("物料组不能为空")}
+
+    # 规范化 item_group：支持单个字符串或列表
+    if isinstance(item_group, str):
+        try:
+            parsed = json.loads(item_group)
+            item_groups = [parsed] if isinstance(parsed, str) else list(parsed)
+        except (json.JSONDecodeError, TypeError):
+            item_groups = [item_group]
+    elif isinstance(item_group, (list, tuple)):
+        item_groups = [g for g in item_group if g]
+    else:
+        item_groups = [str(item_group)]
+
+    if not item_groups:
+        return {"error": _("物料组不能为空")}
+
+    page_number = int(page_number) if page_number is not None else 1
+    page_size = int(page_size) if page_size is not None else 50
+    if page_number < 1:
+        page_number = 1
+    if page_size < 1:
+        page_size = 50
+    if page_size > 500:
+        page_size = 500
+
+    # 以 BOM 为主线：查询指定物料组下所有 BOM，按 BOM 创建时间倒序
+    if len(item_groups) == 1:
+        bom_list = frappe.db.sql("""
+            SELECT bom.name AS bom_name, bom.item, bom.creation, bom.owner,
+                   bom.docstatus, bom.modified_by, bom.modified
+            FROM `tabBOM` AS bom
+            INNER JOIN `tabItem` AS item ON item.name = bom.item AND item.item_group = %s
+            ORDER BY bom.creation DESC
+        """, (item_groups[0],), as_dict=True)
+    else:
+        bom_list = frappe.db.sql("""
+            SELECT bom.name AS bom_name, bom.item, bom.creation, bom.owner,
+                   bom.docstatus, bom.modified_by, bom.modified
+            FROM `tabBOM` AS bom
+            INNER JOIN `tabItem` AS item ON item.name = bom.item AND item.item_group IN %(item_groups)s
+            ORDER BY bom.creation DESC
+        """, {"item_groups": tuple(item_groups)}, as_dict=True)
+
+    result = []
+    for bom_row in bom_list:
+        item_name = bom_row.get("item")
+        if not item_name:
+            continue
+
+        doc = frappe.get_doc("Item", item_name)
+        d = doc.as_dict()
+
+        # 物料基础信息（常用字段）
+        base = {
+            "name": bom_row.get("bom_name"),  # 行主键建议使用 BOM 的 name
+            "item_code": d.get("item_code"),
+            "item_name": d.get("item_name"),
+            "item_group": d.get("item_group"),
+            "stock_uom": d.get("stock_uom"),
+            "disabled": d.get("disabled"),
+        }
+        # Item 自定义字段
+        base["custom_diameter_width"] = d.get("custom_diameter_width")
+        base["custom_height"] = d.get("custom_height")
+        base["custom_inner_cover_width"] = d.get("custom_inner_cover_width")
+        base["custom_material"] = d.get("custom_material")
+
+        # BOM 清单编号：当前 BOM 的 name
+        base["bom_no"] = bom_row.get("bom_name")
+        base["bom_list_no"] = bom_row.get("bom_name")
+
+        # 创建日期、创建人（取自 BOM）
+        base["creation"] = bom_row.get("creation")
+        base["owner"] = bom_row.get("owner")
+        owner_id = bom_row.get("owner")
+        base["owner_name"] = (
+            frappe.get_value("User", owner_id, "full_name") if owner_id else None
+        )
+        # 审核人、审核日期（取自当前 BOM，已提交时）
+        base["approved_by"] = None
+        base["approved_on"] = None
+        if bom_row.get("docstatus") == 1:
+            base["approved_by"] = bom_row.get("modified_by")
+            base["approved_on"] = bom_row.get("modified")
+
+        # 取第一个供给客户（若有），用于展示，不按客户展开行
+        target_customers = d.get("br_target_customers") or []
+        customer = None
+        customer_name = None
+        if target_customers:
+            customer = target_customers[0].get("customer")
+            if customer and frappe.db.exists("Customer", customer):
+                customer_name = frappe.get_value("Customer", customer, "customer_name")
+
+        result.append({
+            **base,
+            "customer": customer,
+            "customer_name": customer_name,
+        })
+
+    total_count = len(result)
+    total_pages = (total_count + page_size - 1) // page_size if page_size else 0
+    start = (page_number - 1) * page_size
+    end = start + page_size
+    data = result[start:end]
+
+    return {
+        "total_count": total_count,
+        "total_pages": total_pages,
+        "page_number": page_number,
+        "page_size": page_size,
+        "data": data,
+    }
+
+
 # 要从 API 调用此脚本，使用以下 URL：
 # http://192.168.32.20:8000/api/method/get_items_with_attributes?filters={"item_group": "成品"}&fields=["name","item_code"]
 
@@ -953,8 +1088,11 @@ def save_item_bom_structure(bom_data):
                 # 检查 BOM Item 中的物料是否存在
                 if not frappe.db.exists("Item", cleaned_item_data["item_code"]):
                     frappe.throw(_(f"Item {cleaned_item_data['item_code']} does not exist"))
-                
+
+                source_wh = item_data.get("source_warehouse")
                 bom_doc.append("items", cleaned_item_data)
+                if source_wh:
+                    bom_doc.items[-1].source_warehouse = source_wh
         
         # 清理 BOM Operations 子表数据
         if "operations" in cleaned_bom_data and cleaned_bom_data["operations"]:

@@ -10,6 +10,7 @@
   "quotation_number",
   "customer_name",
   "product_name",
+  "item_code",
   "quotation_date",
   "validity_period",
   "include_tax",
@@ -54,6 +55,13 @@
    "fieldtype": "Data",
    "label": "\u4ea7\u54c1\u540d\u79f0",
    "placeholder": "\u8f93\u5165\u4ea7\u54c1\u540d\u79f0"
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "\u7269\u6599\u7f16\u53f7",
+   "options": "Item",
+   "placeholder": "\u70b9\u51fb\u6b64\u5904\u9009\u62e9\u7269\u6599"
   },
   {
    "default": "Today",

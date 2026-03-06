@@ -39,17 +39,31 @@ class BRQuotation(Document):
 				# 更新现有的客户报价单
 				customer_quotation_doc = frappe.get_doc("BR Customer Quotation", existing_customer_quotation)
 				customer_quotation_doc.product_name = self.product_name
+				# 可选同步物料编号（客户报价单不一定有此字段，做兼容）
+				try:
+					if frappe.get_meta("BR Customer Quotation").has_field("item_code"):
+						customer_quotation_doc.item_code = getattr(self, "item_code", None)
+				except Exception:
+					pass
 				customer_quotation_doc.save(ignore_permissions=True)
 				print(f"[DEBUG] 成功更新客户报价单 {self.quotation_number} 的产品名称")
 				return
 			
 			# 创建新的客户报价单
-			customer_quotation_doc = frappe.get_doc({
+			customer_quotation_data = {
 				"doctype": "BR Customer Quotation",
 				"quotation_number": self.quotation_number,
 				"customer_name": self.customer_name,
 				"product_name": self.product_name
-			})
+			}
+			# 可选同步物料编号（客户报价单不一定有此字段，做兼容）
+			try:
+				if frappe.get_meta("BR Customer Quotation").has_field("item_code"):
+					customer_quotation_data["item_code"] = getattr(self, "item_code", None)
+			except Exception:
+				pass
+			
+			customer_quotation_doc = frappe.get_doc(customer_quotation_data)
 			
 			customer_quotation_doc.insert(ignore_permissions=True)
 			print(f"[DEBUG] 成功同步报价单 {self.quotation_number} 到客户报价单")
@@ -406,6 +420,7 @@ def get_quotation_versions(quotation_number):
 				name,
 				quotation_number,
 				customer_name,
+				item_code,
 				quotation_date,
 				validity_period,
 				include_tax,
