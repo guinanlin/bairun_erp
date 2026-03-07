@@ -78,6 +78,10 @@ _ITEM_ATTRS_MAIN_FIELDS = (
 	"br_carton_height",
 	"br_supplier",
 	"br_price",
+	"br_quality_inspection",
+	"br_has_mark",
+	"br_mark_document",
+	"br_mark_document_name",
 )
 
 # 子表字段名

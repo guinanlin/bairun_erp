@@ -1,10 +1,9 @@
 # Copyright (c) 2025, Bairun and contributors
 # 采购订单列表接口：专用 API 返回采购订单列表，结构为 header（主表）+ lines（子表明细）。
 #
-# 接口路径: /api/method/bairun_erp.utils.api.buying.purchase_order_list.get_purchase_order_list
+# 采购订单列表: get_purchase_order_list
+# 采购未交列表: get_purchase_order_unfulfilled_list
 # 请求方式: POST，Content-Type: application/json
-# 请求体: { "json_data": { "filters": [], "order_by": "creation desc", "limit_start": 0, "limit_page_length": 100 } }
-# 响应: { "message": [ { "header": {...}, "lines": [ {...}, ... ] }, ... ] }
 
 from __future__ import unicode_literals
 
@@ -257,3 +256,150 @@ def get_purchase_order_list(**kwargs):
 	)
 
 	return result
+
+
+def _flt(val, default=0):
+	try:
+		return float(val) if val is not None else default
+	except (TypeError, ValueError):
+		return default
+
+
+@frappe.whitelist()
+def get_purchase_order_unfulfilled_list(**kwargs):
+	"""
+	采购未交列表：返回未交数量 > 0 的采购订单行扁平列表。
+	POST json_data: filters, order_by, limit_start, limit_page_length,
+	  search_customer_order, search_supplier, search_item_name
+	返回: { "message": [ 未交行对象, ... ], "total_count": 总条数 }
+	"""
+	params = _parse_params(kwargs)
+	order_by = (params.get("order_by") or "transaction_date desc, purchase_order asc, idx asc").strip()
+	# 若沿用列表接口默认的 creation desc，改为按单据日期，避免 ORDER BY 中 creation 在 JOIN 下歧义
+	if order_by.lower().startswith("creation"):
+		order_by = "transaction_date desc, purchase_order asc, idx asc"
+	limit_start = int(params.get("limit_start", 0))
+	limit_page_length = params.get("limit_page_length", 50)
+	try:
+		limit_page_length = int(limit_page_length)
+	except (TypeError, ValueError):
+		limit_page_length = 50
+	use_limit = limit_page_length and limit_page_length > 0
+	if not use_limit:
+		limit_page_length = None
+
+	po_meta = frappe.get_meta("Purchase Order")
+	item_meta = frappe.get_meta("Purchase Order Item")
+	has_po_customer_order = bool(po_meta.get_field("customer_order"))
+
+	select_parts = [
+		"po.name as purchase_order",
+		"po.supplier as supplier",
+		"po.supplier_name as supplier_name",
+		"po.transaction_date as transaction_date",
+		"item.schedule_date as schedule_date",
+		"item.item_code as item_code",
+		"item.item_name as item_name",
+		"item.qty as qty",
+		"IFNULL(item.received_qty, 0) as received_qty",
+		"item.rate as rate",
+		"item.amount as amount",
+		"item.warehouse as warehouse",
+		"item.idx as idx",
+	]
+	if has_po_customer_order:
+		select_parts.append("COALESCE(po.customer_order, item.sales_order) as customer_order")
+	else:
+		select_parts.append("item.sales_order as customer_order")
+	for f in ("rework_qty", "order_confirmation_status", "warehouse_slot"):
+		if item_meta.get_field(f):
+			select_parts.append("item.{} as {}".format(f, f))
+
+	conditions = [
+		"po.status NOT IN ('Cancelled', 'Closed')",
+		"(item.qty - IFNULL(item.received_qty, 0)) > 0",
+	]
+	values = []
+
+	search_co = (params.get("search_customer_order") or "").strip()
+	search_sup = (params.get("search_supplier") or "").strip()
+	search_item = (params.get("search_item_name") or "").strip()
+	if search_co:
+		if has_po_customer_order:
+			conditions.append("(po.customer_order LIKE %s OR item.sales_order LIKE %s)")
+			values.extend(["%" + search_co + "%", "%" + search_co + "%"])
+		else:
+			conditions.append("item.sales_order LIKE %s")
+			values.append("%" + search_co + "%")
+	if search_sup:
+		conditions.append("(po.supplier LIKE %s OR po.supplier_name LIKE %s)")
+		values.extend(["%" + search_sup + "%", "%" + search_sup + "%"])
+	if search_item:
+		conditions.append("(item.item_name LIKE %s OR item.item_code LIKE %s)")
+		values.extend(["%" + search_item + "%", "%" + search_item + "%"])
+
+	where_sql = " AND ".join(conditions)
+	order_sql = order_by.replace("purchase_order", "po.name").replace("transaction_date", "po.transaction_date").replace("idx", "item.idx")
+	# 避免 JOIN 下 ORDER BY 列歧义：creation 限定为主表
+	if "creation" in order_sql.lower():
+		order_sql = order_sql.replace("creation", "po.creation").replace("CREATION", "po.creation")
+
+	base_sql = """
+		SELECT {}
+		FROM `tabPurchase Order` po
+		INNER JOIN `tabPurchase Order Item` item ON item.parent = po.name
+		WHERE {}
+	""".format(", ".join(select_parts), where_sql)
+
+	count_sql = "SELECT COUNT(*) AS cnt FROM (`tabPurchase Order` po INNER JOIN `tabPurchase Order Item` item ON item.parent = po.name) WHERE " + where_sql
+	total_count = 0
+	try:
+		res = frappe.db.sql(count_sql, values, as_dict=True)
+		if res:
+			total_count = int(res[0].get("cnt", 0))
+	except Exception:
+		pass
+
+	data_sql = base_sql + " ORDER BY " + order_sql
+	if use_limit:
+		data_sql += " LIMIT %s, %s"
+		run_values = values + [limit_start, limit_page_length]
+	else:
+		run_values = values
+
+	rows = frappe.db.sql(data_sql, run_values, as_dict=True)
+	out = []
+	for r in rows:
+		qty = _flt(r.get("qty"))
+		received_qty = _flt(r.get("received_qty"))
+		outstanding_qty = qty - received_qty
+		if outstanding_qty <= 0:
+			continue
+		rate = _flt(r.get("rate"))
+		row = {
+			"purchase_order": r.get("purchase_order"),
+			"customer_order": r.get("customer_order"),
+			"supplier": r.get("supplier"),
+			"supplier_name": r.get("supplier_name"),
+			"transaction_date": r.get("transaction_date"),
+			"schedule_date": r.get("schedule_date"),
+			"item_code": r.get("item_code"),
+			"item_name": r.get("item_name"),
+			"qty": qty,
+			"received_qty": received_qty,
+			"outstanding_qty": outstanding_qty,
+			"rate": rate,
+			"amount": _flt(r.get("amount")),
+			"rework_qty": _flt(r.get("rework_qty")) if r.get("rework_qty") is not None else 0,
+			"order_confirmation_status": r.get("order_confirmation_status"),
+			"outstanding_amount": round(rate * outstanding_qty, 2),
+			"warehouse": r.get("warehouse"),
+			"warehouse_slot": r.get("warehouse_slot"),
+			"rowKey": "{}-{}".format(r.get("purchase_order") or "", r.get("idx") or (len(out) + 1)),
+		}
+		out.append(row)
+
+	frappe.response["message"] = out
+	frappe.response["total_count"] = total_count
+	# 不返回 dict，避免 handler 将返回值赋给 response.message 覆盖掉 total_count
+	return

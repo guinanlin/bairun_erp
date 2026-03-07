@@ -1,0 +1,110 @@
+{
+ "custom_fields": [
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "section_break_br_guide",
+   "fieldtype": "Section Break",
+   "label": "作业指导书",
+   "insert_after": "reference_name",
+   "collapsible": 0,
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "custom_work_instruction_guide",
+   "fieldtype": "Attach",
+   "label": "作业指导书",
+   "insert_after": "section_break_br_guide",
+   "description": "可上传作业指导书文件（PDF、图片等），支持附件。",
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "column_break_br_1",
+   "fieldtype": "Column Break",
+   "insert_after": "custom_work_instruction_guide",
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "custom_order_qty",
+   "fieldtype": "Float",
+   "label": "订单数量",
+   "insert_after": "column_break_br_1",
+   "precision": 6,
+   "non_negative": 1,
+   "description": "来源单（如采购接收）对应行的订单数量，可从前端或脚本带出。",
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "section_break_br_results",
+   "fieldtype": "Section Break",
+   "label": "质检结果",
+   "insert_after": "custom_order_qty",
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "custom_good_qty",
+   "fieldtype": "Float",
+   "label": "良品数量",
+   "insert_after": "section_break_br_results",
+   "precision": 6,
+   "non_negative": 1,
+   "default": 0,
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "custom_defective_qty",
+   "fieldtype": "Float",
+   "label": "次品数量",
+   "insert_after": "custom_good_qty",
+   "precision": 6,
+   "non_negative": 1,
+   "default": 0,
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "column_break_br_2",
+   "fieldtype": "Column Break",
+   "insert_after": "custom_defective_qty",
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "custom_defective_handling",
+   "fieldtype": "Select",
+   "label": "次品处理意见",
+   "insert_after": "column_break_br_2",
+   "options": "\n退回\n报废\n特采",
+   "description": "有次品时选择处理方式：退回、报废或特采。",
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "section_break_br_photos",
+   "fieldtype": "Section Break",
+   "label": "次品照片",
+   "insert_after": "custom_defective_handling",
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Quality Inspection",
+   "fieldname": "custom_defective_photos",
+   "fieldtype": "Table",
+   "label": "次品照片",
+   "insert_after": "section_break_br_photos",
+   "options": "QI Defective Photo",
+   "description": "有次品时可上传多张次品照片，每行一张附件/图片。",
+   "module": "Bairun Erp"
+  }
+ ],
+ "custom_perms": [],
+ "doctype": "Quality Inspection",
+ "links": [],
+ "property_setters": [],
+ "sync_on_migrate": 1
+}
