@@ -1,0 +1,29 @@
+{
+ "custom_fields": [
+  {
+   "dt": "Stock Entry",
+   "fieldname": "custom_customer_order",
+   "fieldtype": "Link",
+   "label": "销售订单",
+   "options": "Sales Order",
+   "insert_after": "purchase_receipt_no",
+   "description": "毛坯委外调拨时关联的销售订单号，用于待委外/已委外列表按销售订单汇总与筛选。",
+   "module": "Bairun Erp"
+  },
+  {
+   "dt": "Stock Entry",
+   "fieldname": "custom_outsourcing_supplier",
+   "fieldtype": "Link",
+   "label": "委外供应商",
+   "options": "Supplier",
+   "insert_after": "custom_customer_order",
+   "description": "毛坯委外调拨时的委外加工供应商，用于已委外列表展示与筛选。",
+   "module": "Bairun Erp"
+  }
+ ],
+ "custom_perms": [],
+ "doctype": "Stock Entry",
+ "links": [],
+ "property_setters": [],
+ "sync_on_migrate": 1
+}

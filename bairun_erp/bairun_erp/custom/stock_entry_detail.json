@@ -1,0 +1,20 @@
+{
+ "custom_fields": [
+  {
+   "dt": "Stock Entry Detail",
+   "fieldname": "purchase_order",
+   "fieldtype": "Link",
+   "label": "Purchase Order",
+   "options": "Purchase Order",
+   "insert_after": "reference_purchase_receipt",
+   "read_only": 1,
+   "description": "来源采购订单，由质检入库等流程从 PR 行带出，用于 SE 的 Connections 显示及追溯。",
+   "module": "Bairun Erp"
+  }
+ ],
+ "custom_perms": [],
+ "doctype": "Stock Entry Detail",
+ "links": [],
+ "property_setters": [],
+ "sync_on_migrate": 1
+}

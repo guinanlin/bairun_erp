@@ -25,6 +25,8 @@ _PO_HEADER_EXTRA_FIELDS = frozenset({
 	"cost_center", "project", "buying_price_list", "ignore_pricing_rule",
 	"shipping_address", "billing_address", "language", "tax_category",
 	"payment_terms_template", "tc_name", "terms",
+	"customer_order",  # 关联的销售订单号（自定义字段，用于列表/Connections 显示）
+	"order_confirmation_no", "order_confirmation_date",  # 订单确认号/日期，通常填销售订单号以关联 SO
 })
 
 # Purchase Order Item 子表允许的字段（用于从 order_data.items 过滤并写入子表）
@@ -35,6 +37,7 @@ _PO_ITEM_FIELDS = frozenset({
 	"expense_account", "cost_center", "item_group", "image",
 	"material_request", "material_request_item", "supplier_quotation", "supplier_quotation_item",
 	"weight_per_unit", "total_weight", "item_tax_rate",
+	"sales_order", "sales_order_item", "sales_order_packed_item",  # 关联销售订单，用于 ERPNext Connections 显示
 })
 
 
@@ -266,12 +269,23 @@ def _before_save_po(doc, order_data):
 
 
 def _after_save_po(doc, order_data):
-	"""保存后钩子：子模块或定制可覆盖。"""
-	pass
+	"""保存后钩子：若 PO 行带有 sales_order + sales_order_item，回写 Sales Order Item 的 purchase_order，使销售订单的 Connections 能显示本采购单。"""
+	for item in (doc.items or []):
+		if not item.sales_order_item or not item.sales_order:
+			continue
+		if not frappe.db.exists("Sales Order Item", item.sales_order_item):
+			continue
+		frappe.db.set_value(
+			"Sales Order Item",
+			item.sales_order_item,
+			"purchase_order",
+			doc.name,
+			update_modified=False,
+		)
 
 
 def _do_insert_save_po(order_data):
-	"""对已校验的 order_data 执行组 doc、insert、save，不 commit。用于单笔与批量共用，保证批量时同一事务。"""
+	"""对已校验的 order_data 执行组 doc、insert、save、submit，不 commit。用于单笔与批量共用，保证批量时同一事务。保存后自动提交为已审核状态。"""
 	company = order_data.get("company")
 	default_warehouse = _get_default_warehouse(company)
 	doc_dict = _build_po_doc_dict(order_data, default_warehouse)
@@ -285,6 +299,9 @@ def _do_insert_save_po(order_data):
 		_before_save_po(po, order_data)
 		po.flags.ignore_validate_update_after_submit = True
 		po.save(ignore_permissions=True)
+		if po.docstatus == 0:
+			po.flags.ignore_permissions = True
+			po.submit()
 	else:
 		doc_dict.pop("name", None)
 		po = frappe.get_doc(doc_dict)
@@ -292,6 +309,8 @@ def _do_insert_save_po(order_data):
 		_before_save_po(po, order_data)
 		po.insert(ignore_permissions=True)
 		po.save(ignore_permissions=True)
+		po.flags.ignore_permissions = True
+		po.submit()
 	_after_save_po(po, order_data)
 	return po
 
@@ -322,7 +341,7 @@ def _parse_order_data_list(order_data_list, kwargs):
 @frappe.whitelist(allow_guest=False)
 def save_purchase_order(order_data=None, *args, **kwargs):
 	"""
-	创建或更新采购订单（Purchase Order）。
+	创建或更新采购订单（Purchase Order），保存后自动提交为已审核状态。
 
 	入参:
 		order_data: 采购订单数据 dict，或通过 json_data 传入。
@@ -330,8 +349,13 @@ def save_purchase_order(order_data=None, *args, **kwargs):
 		  - { "order_data": {...} }
 		  - { "json_data": { "order_data": {...} } }
 		主表必填: supplier, company
-		主表可选: transaction_date, schedule_date, currency, set_warehouse, naming_series, taxes, ...
-		子表 items 每行必填: item_code；建议: qty, rate, schedule_date, warehouse, cost_center, expense_account
+		主表可选: transaction_date, schedule_date, currency, set_warehouse, naming_series, taxes,
+		  order_confirmation_no（订单确认号，填销售订单号可在 PO 上显示并关联 SO）,
+		  order_confirmation_date（可选）, customer_order（自定义字段，若有）, ...
+		子表 items 每行必填: item_code；建议: qty, rate, schedule_date, warehouse, cost_center, expense_account；
+		若需在采购单与销售订单双向关联（PO 上显示 Order Confirmation No + 两侧 Connections）：
+		  主表传 order_confirmation_no = 销售订单 name；
+		  items 每行传 sales_order = 销售订单 name，sales_order_item = 对应 Sales Order Item 的 name（必填以便回写 SO 行）。
 
 	返回:
 		成功: { "data": { "success": True, "name": "PUR-ORD-YYYY-xxxxx", "message": "...", "doc": {...} } }
@@ -357,7 +381,7 @@ def save_purchase_order(order_data=None, *args, **kwargs):
 			"data": {
 				"success": True,
 				"name": po.name,
-				"message": _("采购订单已保存"),
+				"message": _("采购订单已保存并提交"),
 				"doc": doc_as_dict,
 			}
 		}
@@ -372,7 +396,7 @@ def save_purchase_order(order_data=None, *args, **kwargs):
 @frappe.whitelist(allow_guest=False)
 def save_purchase_orders(order_data_list=None, *args, **kwargs):
 	"""
-	批量创建或更新采购订单，保证事务完整性：要么全部成功，要么全部回滚。
+	批量创建或更新采购订单，保存后自动提交为已审核状态；保证事务完整性：要么全部成功，要么全部回滚。
 
 	入参:
 		order_data_list: 采购订单数据列表，每项与 save_purchase_order 的 order_data 结构相同。
@@ -436,7 +460,7 @@ def save_purchase_orders(order_data_list=None, *args, **kwargs):
 				"count": len(docs),
 				"names": names,
 				"docs": docs,
-				"message": _("已批量保存 {0} 张采购订单").format(len(docs)),
+				"message": _("已批量保存并提交 {0} 张采购订单").format(len(docs)),
 			}
 		}
 	except frappe.ValidationError as e:

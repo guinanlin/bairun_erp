@@ -31,24 +31,54 @@ def _validate_suppliers_exist_for_service(suppliers):
 		)
 
 
-def _build_service_item_response(doc):
-	"""统一构造返回结构。"""
-	return {
+def _build_service_item_response(doc, include_supplier_name=False):
+	"""统一构造返回结构。include_supplier_name 为 True 时带出 supplier_name（用于只读接口）。
+	若 Item 有纸箱长宽高字段（br_carton_length/width/height，单位厘米），则一并返回，并返回体积 br_volume_m3（立方米，= 长*宽*高/1e6）。
+	"""
+	supplier_items = []
+	for row in (doc.get("supplier_items") or []):
+		entry = {
+			"supplier": row.supplier,
+			"supplier_part_no": getattr(row, "supplier_part_no", None) or "",
+			"custom_price": getattr(row, "custom_price", None),
+			"custom_isinvoice": getattr(row, "custom_isinvoice", None),
+		}
+		if include_supplier_name and row.supplier:
+			supplier_name = frappe.db.get_value("Supplier", row.supplier, "supplier_name")
+			entry["supplier_name"] = supplier_name or row.supplier
+		supplier_items.append(entry)
+
+	out = {
 		"item_code": doc.item_code,
 		"item_name": doc.item_name,
 		"item_group": doc.item_group,
 		"stock_uom": doc.stock_uom,
 		"description": getattr(doc, "description", None) or "",
-		"supplier_items": [
-			{
-				"supplier": row.supplier,
-				"supplier_part_no": getattr(row, "supplier_part_no", None) or "",
-				"custom_price": getattr(row, "custom_price", None),
-				"custom_isinvoice": getattr(row, "custom_isinvoice", None),
-			}
-			for row in (doc.get("supplier_items") or [])
-		],
+		"supplier_items": supplier_items,
 	}
+
+	# 纸箱长宽高（厘米）与体积（立方米）：有则返回，无则 None
+	l = _float_or_none(getattr(doc, "br_carton_length", None))
+	w = _float_or_none(getattr(doc, "br_carton_width", None))
+	h = _float_or_none(getattr(doc, "br_carton_height", None))
+	out["br_carton_length"] = l
+	out["br_carton_width"] = w
+	out["br_carton_height"] = h
+	if l is not None and w is not None and h is not None:
+		out["br_volume_m3"] = (l / 100.0) * (w / 100.0) * (h / 100.0)
+	else:
+		out["br_volume_m3"] = None
+	return out
+
+
+def _float_or_none(val):
+	"""若 val 可转为 float 则返回 float，否则返回 None。"""
+	if val is None or val == "":
+		return None
+	try:
+		return float(val)
+	except (TypeError, ValueError):
+		return None
 
 
 @frappe.whitelist()
@@ -109,7 +139,7 @@ def add_service_item(
 			doc.supplier_items = []
 			_ensure_supplier_items(doc, suppliers)
 		doc.save(ignore_permissions=True)
-		return _build_service_item_response(doc)
+		return _build_service_item_response(doc, include_supplier_name=False)
 
 	# 新增
 	if (item_group or "").strip():
@@ -134,4 +164,107 @@ def add_service_item(
 	doc = frappe.get_doc(doc_dict)
 	doc.insert(ignore_permissions=True)
 	_ensure_supplier_items(doc, suppliers)
-	return _build_service_item_response(doc)
+	return _build_service_item_response(doc, include_supplier_name=False)
+
+
+def _resolve_service_item_code(
+	item_code: str | None = None,
+	item_name: str | None = None,
+	item_group: str | None = None,
+) -> str | None:
+	"""
+	根据 item_code 或 item_name 解析到服务 Item 的 name（item_code）。
+	与 add_service_item 约定一致：只传 item_name 时先按 item_code=item_name 查，再按 item_name 查。
+	若未找到则返回 None。
+	"""
+	item_code = (item_code or "").strip()
+	item_name = (item_name or "").strip()
+	item_group = (item_group or "").strip()
+
+	if item_code:
+		if frappe.db.exists("Item", item_code):
+			if item_group:
+				doc_item_group = frappe.db.get_value("Item", item_code, "item_group")
+				if doc_item_group != item_group:
+					return None
+			return item_code
+		return None
+
+	if not item_name:
+		return None
+
+	# 先按 add_service_item 约定：item_code = item_name 创建的
+	if frappe.db.exists("Item", item_name):
+		doc = frappe.db.get_value("Item", item_name, ["item_group"], as_dict=True)
+		if not item_group or (doc and doc.get("item_group") == item_group):
+			return item_name
+
+	# 再按 item_name 字段查（可能 item_code 与 item_name 不同）
+	filters = {"item_name": item_name}
+	if item_group:
+		filters["item_group"] = item_group
+	found = frappe.get_all(
+		"Item",
+		filters=filters,
+		fields=["name"],
+		order_by="modified desc",
+		limit_page_length=1,
+	)
+	if found:
+		return found[0]["name"]
+	return None
+
+
+@frappe.whitelist()
+def get_service_item(
+	item_code: str | None = None,
+	item_name: str | None = None,
+	item_group: str | None = None,
+):
+	"""
+	按采购类目获取服务 Item 及供应商明细（只读）。
+	用于采购价格页初始加载或切换类目时拉取该类目下已配置的供应商与单价。
+	也用于箱规选择：传 item_code 可查任意 Item（含纸箱），返回供应商列表及纸箱长宽高、体积（立方米）。
+
+	参数:
+		item_code: 可选。物料编码。与 item_name 至少传一个。
+		item_name: 可选。物料名称。前端采购类目（如「注塑」「UV镀」）即对应 item_name。
+		item_group: 可选。物料组，用于缩小范围或校验。
+
+	返回:
+		含 item_code、item_name、item_group、stock_uom、description、supplier_items（含 supplier、
+		supplier_name、supplier_part_no、custom_price、custom_isinvoice）；
+		若 Item 有纸箱长宽高（br_carton_*，单位厘米），则含 br_carton_length、br_carton_width、
+		br_carton_height、br_volume_m3（体积，立方米，= 长*宽*高/1e6）；无则上述字段为 null。
+		若该类目尚未建服务 Item（从未做过供应商审核），返回 200，message 中 supplier_items 为空数组，
+		主表字段可为 null/空，便于前端按「未配置」展示空列表。
+	"""
+	item_code = (item_code or "").strip()
+	item_name = (item_name or "").strip()
+
+	if not item_code and not item_name:
+		frappe.throw("item_code 与 item_name 至少需要传一个")
+
+	resolved = _resolve_service_item_code(
+		item_code=item_code or None,
+		item_name=item_name or None,
+		item_group=(item_group or "").strip() or None,
+	)
+
+	if not resolved:
+		# 该类目尚未配置服务 Item，返回方案 B：空 supplier_items，主表用请求的 item_name
+		return {
+			"item_code": None,
+			"item_name": item_name or None,
+			"item_group": None,
+			"stock_uom": None,
+			"description": None,
+			"supplier_items": [],
+			"br_carton_length": None,
+			"br_carton_width": None,
+			"br_carton_height": None,
+			"br_volume_m3": None,
+		}
+
+	doc = frappe.get_doc("Item", resolved)
+	return _build_service_item_response(doc, include_supplier_name=True)

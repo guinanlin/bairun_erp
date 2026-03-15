@@ -274,10 +274,9 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 	返回: { "message": [ 未交行对象, ... ], "total_count": 总条数 }
 	"""
 	params = _parse_params(kwargs)
-	order_by = (params.get("order_by") or "transaction_date desc, purchase_order asc, idx asc").strip()
-	# 若沿用列表接口默认的 creation desc，改为按单据日期，避免 ORDER BY 中 creation 在 JOIN 下歧义
-	if order_by.lower().startswith("creation"):
-		order_by = "transaction_date desc, purchase_order asc, idx asc"
+	# 默认按采购单创建日期倒序，便于查看最新创建的未交单
+	order_by = (params.get("order_by") or "creation desc, purchase_order asc, idx asc").strip()
+	# ORDER BY 中 creation 在 JOIN 下需限定为主表 po.creation，见下方 order_sql 处理
 	limit_start = int(params.get("limit_start", 0))
 	limit_page_length = params.get("limit_page_length", 50)
 	try:
