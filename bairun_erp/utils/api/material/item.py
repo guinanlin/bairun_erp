@@ -302,25 +302,30 @@ def add_packaging_material(
 	stock_uom: str | None = None,
 	suppliers: str | list | None = None,
 	description: str | None = None,
+	custom_weight: str | None = None,
+	custom_number_of_holes: int | None = None,
 ):
 	"""
 	添加包材：按规格（纸箱长、宽、高）创建一条包材 Item。
 	若系统中已存在相同规格的纸箱，则拒绝添加并抛出错误。
 	可选写入供应商明细（单价、是否开票）；不传 suppliers 时自动取系统中全部供应商写入。
+	吸塑时前端传 br_carton_height="0"，重量与孔数通过 custom_weight、custom_number_of_holes 传入。
 
 	参数:
 		item_code: 可选。物料编码，不传则按规格生成（CARTON-长-宽-高）。
 		item_name: 可选。物料名称，默认用 item_code 或规格描述。
-		br_carton_length: 必填。纸箱长度。
-		br_carton_width: 必填。纸箱宽度。
-		br_carton_height: 必填。纸箱高度。
-		item_group: 可选。物料组。不传默认「包材」；可传包材下的子组（如「纸箱」「其他」等）以区分包材类型，使添加更通用。
+		br_carton_length: 必填。纸箱长度（吸塑时为长）。
+		br_carton_width: 必填。纸箱宽度（吸塑时为宽）。
+		br_carton_height: 必填。纸箱高度；吸塑时前端固定传 "0"，重量由 custom_weight 表示。
+		item_group: 可选。物料组。不传默认「包材」；可传包材下的子组（如「纸箱」「吸塑」等）以区分包材类型。
 		stock_uom: 可选。库存单位，默认 "Nos"。
 		suppliers: 可选。供应商列表，JSON 或 list，每项 {supplier, custom_price?, custom_isinvoice?, supplier_part_no?}。不传则用系统中全部供应商，单价/开票默认 0。
 		description: 可选。包材 Item 的描述（Item.description）。
+		custom_weight: 可选。吸塑等：重量，写入 Item.custom_weight；仅吸塑新增时前端会传。
+		custom_number_of_holes: 可选。吸塑等：孔数，写入 Item.custom_number_of_holes；仅吸塑新增时前端会传。
 
 	返回:
-		{"item_code": "...", "item_name": "...", "description": "...", "supplier_items": [...], ...}
+		{"item_code": "...", "item_name": "...", "description": "...", "supplier_items": [...], "custom_weight": ..., "custom_number_of_holes": ..., ...}
 
 	异常:
 		同一物料组下规格已存在时: frappe.ValidationError "该物料组下此纸箱规格已存在"
@@ -379,6 +384,14 @@ def add_packaging_material(
 	}
 	if description_val:
 		doc_dict["description"] = description_val
+	# 吸塑等：重量、孔数写入 Item 自定义字段（前端吸塑新增时会传）
+	if custom_weight is not None:
+		doc_dict["custom_weight"] = str(custom_weight).strip() if isinstance(custom_weight, str) else str(custom_weight)
+	if custom_number_of_holes is not None:
+		try:
+			doc_dict["custom_number_of_holes"] = int(custom_number_of_holes)
+		except (TypeError, ValueError):
+			doc_dict["custom_number_of_holes"] = 0
 	doc = frappe.get_doc(doc_dict)
 	doc.insert(ignore_permissions=True)
 
@@ -394,6 +407,8 @@ def add_packaging_material(
 		"item_group": doc.item_group,
 		"stock_uom": doc.stock_uom,
 		"description": getattr(doc, "description", None) or "",
+		"custom_weight": getattr(doc, "custom_weight", None) or "",
+		"custom_number_of_holes": getattr(doc, "custom_number_of_holes", None),
 	}
 	out["supplier_items"] = [
 		{

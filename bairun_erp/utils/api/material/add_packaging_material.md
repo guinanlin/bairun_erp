@@ -51,6 +51,8 @@ bench --site site2.local execute 'bairun_erp.utils.api.material.item.add_packagi
 | `stock_uom`        | string | 否 | 库存单位。默认 `"Nos"`。 |
 | `suppliers`        | string / list | 否 | 供应商列表。见下表。不传则自动取系统中**全部**供应商写入，单价、是否开票均为 0。 |
 | `description`      | string | 否 | 包材 Item 的描述（Item.description）。 |
+| `custom_weight`    | string | 否 | 吸塑等：重量，写入 Item.custom_weight；仅吸塑新增时前端会传。 |
+| `custom_number_of_holes` | number / string | 否 | 吸塑等：孔数，写入 Item.custom_number_of_holes；仅吸塑新增时前端会传。 |
 
 **`suppliers` 每项结构：**
 
@@ -79,6 +81,8 @@ bench --site site2.local execute 'bairun_erp.utils.api.material.item.add_packagi
 | `item_group`       | string | 物料组。 |
 | `stock_uom`        | string | 库存单位。 |
 | `description`      | string | 物料描述。 |
+| `custom_weight`   | string | 重量（吸塑时写入）。 |
+| `custom_number_of_holes` | number | 孔数（吸塑时写入）。 |
 
 ### 4.2 供应商明细 `supplier_items`
 
