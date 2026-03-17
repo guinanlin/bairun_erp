@@ -304,6 +304,7 @@ def add_packaging_material(
 	description: str | None = None,
 	custom_weight: str | None = None,
 	custom_number_of_holes: int | None = None,
+	custom_pallet_material: str | None = None,
 ):
 	"""
 	添加包材：按规格（纸箱长、宽、高）创建一条包材 Item。
@@ -392,6 +393,14 @@ def add_packaging_material(
 			doc_dict["custom_number_of_holes"] = int(custom_number_of_holes)
 		except (TypeError, ValueError):
 			doc_dict["custom_number_of_holes"] = 0
+	# 托盘等：材质写入 Item.custom_pallet_material（前端托盘新增会传）
+	if (
+		custom_pallet_material is not None
+		and meta.get_field("custom_pallet_material")
+		and frappe.db.has_column("Item", "custom_pallet_material")
+	):
+		val = (custom_pallet_material or "").strip()
+		doc_dict["custom_pallet_material"] = val or None
 	doc = frappe.get_doc(doc_dict)
 	doc.insert(ignore_permissions=True)
 

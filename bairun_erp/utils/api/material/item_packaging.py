@@ -33,6 +33,7 @@ PACKAGING_CATEGORY_MAP = {
 	"transparent-tape": "透明胶带",
 	"red-tape": "红色胶带",
 	"stretch-film": "缠绕膜",
+	"pallet": "托盘",
 }
 
 # 物料组 name -> 分类 key（反向，用于返回 category）
@@ -103,6 +104,7 @@ def get_packaging_material_page(
 	# 包材 Item：有纸箱规格字段的、且属于该物料组
 	meta = frappe.get_meta("Item")
 	has_carton = all(meta.get_field(f) for f in ("br_carton_length", "br_carton_width", "br_carton_height"))
+	has_pallet_material = bool(meta.get_field("custom_pallet_material")) and frappe.db.has_column("Item", "custom_pallet_material")
 	if not has_carton:
 		return {
 			"item_group": group_name,
@@ -118,10 +120,13 @@ def get_packaging_material_page(
 	filters = {"item_group": group_name, "br_carton_length": ["!=", ""]}
 	total = frappe.db.count("Item", filters=filters)
 	limit_start = (page - 1) * page_size
+	item_fields = ["name", "description", "br_carton_length", "br_carton_width", "br_carton_height"]
+	if has_pallet_material:
+		item_fields.append("custom_pallet_material")
 	items = frappe.get_all(
 		"Item",
 		filters=filters,
-		fields=["name", "description", "br_carton_length", "br_carton_width", "br_carton_height"],
+		fields=item_fields,
 		limit_start=limit_start,
 		limit_page_length=page_size,
 		order_by="modified desc",
@@ -213,6 +218,7 @@ def get_packaging_material_page(
 			"length": _float_or_none(i.get("br_carton_length")),
 			"width": _float_or_none(i.get("br_carton_width")),
 			"height": _float_or_none(i.get("br_carton_height")),
+			"material": (i.get("custom_pallet_material") or None) if has_pallet_material else None,
 			"product_requirements": (i.get("description") or "").strip(),
 			"amounts": amounts,
 		})
