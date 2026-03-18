@@ -168,6 +168,17 @@ def get_items_by_item_group_expanded_by_target_customers(item_group="成品", pa
     }
 
 
+@frappe.whitelist(allow_guest=False)
+def fun_items_10(item_group="成品", page_number=1, page_size=50):
+    """
+    短方法名别名，逻辑与 get_items_by_item_group_expanded_by_target_customers 完全一致。
+    按物料组获取 BOM 列表并分页，参数与返回值相同。
+    """
+    return get_items_by_item_group_expanded_by_target_customers(
+        item_group=item_group, page_number=page_number, page_size=page_size
+    )
+
+
 # 要从 API 调用此脚本，使用以下 URL：
 # http://192.168.32.20:8000/api/method/get_items_with_attributes?filters={"item_group": "成品"}&fields=["name","item_code"]
 
