@@ -172,21 +172,74 @@ def get_items_by_item_group_expanded_by_target_customers(item_group="成品", pa
 def fun_items_10(item_group="成品", page_number=1, page_size=50):
     """
     短方法名别名，逻辑与 get_items_by_item_group_expanded_by_target_customers 完全一致。
-    按物料组获取 BOM 列表并分页，参数与返回值相同。
+    当前暂时注释掉中间逻辑，直接返回模拟数据，用于排查权限等问题。
     """
-    # 调试：打印请求参数与 body
-    print("[fun_items_10] 收到的参数: item_group=%r, page_number=%r, page_size=%r" % (item_group, page_number, page_size))
-    print("[fun_items_10] frappe.form_dict (解析后的请求数据): %s" % (frappe.as_json(frappe.form_dict, indent=2)))
-    if getattr(frappe.local, "request", None) and frappe.request.get_data():
-        try:
-            raw_body = frappe.request.get_data(as_text=True)
-            print("[fun_items_10] 请求 Body 原始内容: %s" % (raw_body[:2000] if len(raw_body) > 2000 else raw_body))
-        except Exception as e:
-            print("[fun_items_10] 读取 Body 失败: %s" % e)
+    # 调试：打印请求参数与 body（已注释）
+    # print("[fun_items_10] 收到的参数: item_group=%r, page_number=%r, page_size=%r" % (item_group, page_number, page_size))
+    # print("[fun_items_10] frappe.form_dict (解析后的请求数据): %s" % (frappe.as_json(frappe.form_dict, indent=2)))
+    # if getattr(frappe.local, "request", None) and frappe.request.get_data():
+    #     try:
+    #         raw_body = frappe.request.get_data(as_text=True)
+    #         print("[fun_items_10] 请求 Body 原始内容: %s" % (raw_body[:2000] if len(raw_body) > 2000 else raw_body))
+    #     except Exception as e:
+    #         print("[fun_items_10] 读取 Body 失败: %s" % e)
 
-    return get_items_by_item_group_expanded_by_target_customers(
-        item_group=item_group, page_number=page_number, page_size=page_size
-    )
+    # 原逻辑：调用 get_items_by_item_group_expanded_by_target_customers（已注释，改为直接返回模拟数据）
+    # return get_items_by_item_group_expanded_by_target_customers(
+    #     item_group=item_group, page_number=page_number, page_size=page_size
+    # )
+
+    # 直接返回模拟数据（与 fun_items_20 类似）
+    return {
+        "total_count": 2,
+        "total_pages": 1,
+        "page_number": page_number if page_number is not None else 1,
+        "page_size": page_size if page_size is not None else 50,
+        "data": [
+            {
+                "name": "BOM-FUN10-001",
+                "item_code": "FUN10-001",
+                "item_name": "fun_items_10 模拟物料1",
+                "item_group": "成品",
+                "stock_uom": "Nos",
+                "disabled": 0,
+                "custom_diameter_width": None,
+                "custom_height": None,
+                "custom_inner_cover_width": None,
+                "custom_material": None,
+                "bom_no": "BOM-FUN10-001",
+                "bom_list_no": "BOM-FUN10-001",
+                "creation": "2026-03-18 19:00:00",
+                "owner": "Administrator",
+                "owner_name": "Administrator",
+                "approved_by": "Administrator",
+                "approved_on": "2026-03-18 19:00:00",
+                "customer": None,
+                "customer_name": None,
+            },
+            {
+                "name": "BOM-FUN10-002",
+                "item_code": "FUN10-002",
+                "item_name": "fun_items_10 模拟物料2",
+                "item_group": "半成品",
+                "stock_uom": "Nos",
+                "disabled": 0,
+                "custom_diameter_width": None,
+                "custom_height": None,
+                "custom_inner_cover_width": None,
+                "custom_material": None,
+                "bom_no": "BOM-FUN10-002",
+                "bom_list_no": "BOM-FUN10-002",
+                "creation": "2026-03-18 19:01:00",
+                "owner": "Administrator",
+                "owner_name": "Administrator",
+                "approved_by": "Administrator",
+                "approved_on": "2026-03-18 19:01:00",
+                "customer": None,
+                "customer_name": None,
+            },
+        ],
+    }
 
 
 @frappe.whitelist(allow_guest=False)
