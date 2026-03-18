@@ -34,7 +34,7 @@ def get_items_with_attributes(filters=None, fields=None, or_filters=None, order_
     return result
 
 
-@frappe.whitelist(allow_guest=False)
+@frappe.whitelist(allow_guest=True)
 def get_items_by_item_group_expanded_by_target_customers(item_group="成品", page_number=1, page_size=50):
     """
     按物料组获取该组下所有 BOM，以 BOM 为主线，每个 BOM 一条记录，支持分页：
