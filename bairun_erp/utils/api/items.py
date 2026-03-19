@@ -51,7 +51,10 @@ def get_items_by_item_group_expanded_by_target_customers(item_group="成品", pa
 
     返回：{ total_count, total_pages, page_number, page_size, data }
     """
+    print("[get_items_by_item_group_expanded] 入口参数: item_group=%r (type=%s), page_number=%r, page_size=%r" % (item_group, type(item_group).__name__, page_number, page_size))
+
     if not item_group:
+        print("[get_items_by_item_group_expanded] 早期返回: 物料组为空")
         return {"error": _("物料组不能为空")}
 
     # 规范化 item_group：支持单个字符串或列表
@@ -59,14 +62,19 @@ def get_items_by_item_group_expanded_by_target_customers(item_group="成品", pa
         try:
             parsed = json.loads(item_group)
             item_groups = [parsed] if isinstance(parsed, str) else list(parsed)
-        except (json.JSONDecodeError, TypeError):
+            print("[get_items_by_item_group_expanded] 字符串解析 JSON 后: item_groups=%s" % (item_groups,))
+        except (json.JSONDecodeError, TypeError) as e:
             item_groups = [item_group]
+            print("[get_items_by_item_group_expanded] 字符串未解析为 JSON，按单值: item_groups=%s (e=%s)" % (item_groups, e))
     elif isinstance(item_group, (list, tuple)):
         item_groups = [g for g in item_group if g]
+        print("[get_items_by_item_group_expanded] 列表/元组: item_groups=%s" % (item_groups,))
     else:
         item_groups = [str(item_group)]
+        print("[get_items_by_item_group_expanded] 其他类型转字符串: item_groups=%s" % (item_groups,))
 
     if not item_groups:
+        print("[get_items_by_item_group_expanded] 早期返回: 规范化后物料组为空")
         return {"error": _("物料组不能为空")}
 
     page_number = int(page_number) if page_number is not None else 1
@@ -77,9 +85,11 @@ def get_items_by_item_group_expanded_by_target_customers(item_group="成品", pa
         page_size = 50
     if page_size > 500:
         page_size = 500
+    print("[get_items_by_item_group_expanded] 分页参数: page_number=%s, page_size=%s" % (page_number, page_size))
 
     # 以 BOM 为主线：查询指定物料组下所有 BOM，按 BOM 创建时间倒序
     if len(item_groups) == 1:
+        print("[get_items_by_item_group_expanded] SQL 分支: 单物料组, item_group=%r" % (item_groups[0],))
         bom_list = frappe.db.sql("""
             SELECT bom.name AS bom_name, bom.item, bom.creation, bom.owner,
                    bom.docstatus, bom.modified_by, bom.modified
@@ -88,6 +98,7 @@ def get_items_by_item_group_expanded_by_target_customers(item_group="成品", pa
             ORDER BY bom.creation DESC
         """, (item_groups[0],), as_dict=True)
     else:
+        print("[get_items_by_item_group_expanded] SQL 分支: 多物料组 IN, item_groups=%s" % (item_groups,))
         bom_list = frappe.db.sql("""
             SELECT bom.name AS bom_name, bom.item, bom.creation, bom.owner,
                    bom.docstatus, bom.modified_by, bom.modified
@@ -95,6 +106,10 @@ def get_items_by_item_group_expanded_by_target_customers(item_group="成品", pa
             INNER JOIN `tabItem` AS item ON item.name = bom.item AND item.item_group IN %(item_groups)s
             ORDER BY bom.creation DESC
         """, {"item_groups": tuple(item_groups)}, as_dict=True)
+
+    print("[get_items_by_item_group_expanded] BOM 查询结果条数: len(bom_list)=%s" % len(bom_list))
+    if bom_list:
+        print("[get_items_by_item_group_expanded] BOM 前 3 条: %s" % ([{"bom_name": r.get("bom_name"), "item": r.get("item")} for r in bom_list[:3]]))
 
     result = []
     for bom_row in bom_list:
@@ -159,6 +174,10 @@ def get_items_by_item_group_expanded_by_target_customers(item_group="成品", pa
     end = start + page_size
     data = result[start:end]
 
+    print("[get_items_by_item_group_expanded] 构造结果: total_count=%s, total_pages=%s, start=%s, end=%s, len(data)=%s" % (total_count, total_pages, start, end, len(data)))
+    if data:
+        print("[get_items_by_item_group_expanded] 本页第一条 data 键: %s" % list(data[0].keys()))
+
     return {
         "total_count": total_count,
         "total_pages": total_pages,
@@ -172,74 +191,47 @@ def get_items_by_item_group_expanded_by_target_customers(item_group="成品", pa
 def fun_items_10(item_group="成品", page_number=1, page_size=50):
     """
     短方法名别名，逻辑与 get_items_by_item_group_expanded_by_target_customers 完全一致。
-    当前暂时注释掉中间逻辑，直接返回模拟数据，用于排查权限等问题。
+    带调试日志，便于线上排查。
     """
-    # 调试：打印请求参数与 body（已注释）
-    # print("[fun_items_10] 收到的参数: item_group=%r, page_number=%r, page_size=%r" % (item_group, page_number, page_size))
-    # print("[fun_items_10] frappe.form_dict (解析后的请求数据): %s" % (frappe.as_json(frappe.form_dict, indent=2)))
-    # if getattr(frappe.local, "request", None) and frappe.request.get_data():
-    #     try:
-    #         raw_body = frappe.request.get_data(as_text=True)
-    #         print("[fun_items_10] 请求 Body 原始内容: %s" % (raw_body[:2000] if len(raw_body) > 2000 else raw_body))
-    #     except Exception as e:
-    #         print("[fun_items_10] 读取 Body 失败: %s" % e)
+    print("[fun_items_10] ========== 入口 ==========")
+    print("[fun_items_10] 收到参数: item_group=%r (type=%s), page_number=%r, page_size=%r" % (item_group, type(item_group).__name__, page_number, page_size))
+    try:
+        print("[fun_items_10] frappe.form_dict: %s" % (frappe.as_json(frappe.form_dict) if frappe.form_dict else "{}"))
+    except Exception as e:
+        print("[fun_items_10] 读取 form_dict 异常: %s" % e)
+    if getattr(frappe.local, "request", None):
+        try:
+            raw = getattr(frappe.local, "request", None)
+            if raw and hasattr(raw, "get_data"):
+                body = raw.get_data(as_text=True)
+                snippet = (body[:500] + "...") if body and len(body) > 500 else (body or "")
+                print("[fun_items_10] 请求 body 片段: %s" % snippet)
+        except Exception as e:
+            print("[fun_items_10] 读取 request body 异常: %s" % e)
 
-    # 原逻辑：调用 get_items_by_item_group_expanded_by_target_customers（已注释，改为直接返回模拟数据）
-    # return get_items_by_item_group_expanded_by_target_customers(
-    #     item_group=item_group, page_number=page_number, page_size=page_size
-    # )
-
-    # 直接返回模拟数据（与 fun_items_20 类似）
-    return {
-        "total_count": 2,
-        "total_pages": 1,
-        "page_number": page_number if page_number is not None else 1,
-        "page_size": page_size if page_size is not None else 50,
-        "data": [
-            {
-                "name": "BOM-FUN10-001",
-                "item_code": "FUN10-001",
-                "item_name": "fun_items_10 模拟物料1",
-                "item_group": "成品",
-                "stock_uom": "Nos",
-                "disabled": 0,
-                "custom_diameter_width": None,
-                "custom_height": None,
-                "custom_inner_cover_width": None,
-                "custom_material": None,
-                "bom_no": "BOM-FUN10-001",
-                "bom_list_no": "BOM-FUN10-001",
-                "creation": "2026-03-18 19:00:00",
-                "owner": "Administrator",
-                "owner_name": "Administrator",
-                "approved_by": "Administrator",
-                "approved_on": "2026-03-18 19:00:00",
-                "customer": None,
-                "customer_name": None,
-            },
-            {
-                "name": "BOM-FUN10-002",
-                "item_code": "FUN10-002",
-                "item_name": "fun_items_10 模拟物料2",
-                "item_group": "半成品",
-                "stock_uom": "Nos",
-                "disabled": 0,
-                "custom_diameter_width": None,
-                "custom_height": None,
-                "custom_inner_cover_width": None,
-                "custom_material": None,
-                "bom_no": "BOM-FUN10-002",
-                "bom_list_no": "BOM-FUN10-002",
-                "creation": "2026-03-18 19:01:00",
-                "owner": "Administrator",
-                "owner_name": "Administrator",
-                "approved_by": "Administrator",
-                "approved_on": "2026-03-18 19:01:00",
-                "customer": None,
-                "customer_name": None,
-            },
-        ],
-    }
+    try:
+        out = get_items_by_item_group_expanded_by_target_customers(
+            item_group=item_group, page_number=page_number, page_size=page_size
+        )
+        if isinstance(out, dict):
+            if "error" in out:
+                print("[fun_items_10] 返回为错误: %s" % out.get("error"))
+            else:
+                print("[fun_items_10] 返回: total_count=%s, total_pages=%s, page_number=%s, page_size=%s, len(data)=%s" % (
+                    out.get("total_count"), out.get("total_pages"), out.get("page_number"), out.get("page_size"), len(out.get("data") or [])
+                ))
+                if out.get("data"):
+                    print("[fun_items_10] 本页第一条 item_code: %s" % (out["data"][0].get("item_code")))
+        else:
+            print("[fun_items_10] 返回类型: %s" % type(out).__name__)
+        print("[fun_items_10] ========== 结束 ==========")
+        return out
+    except Exception as e:
+        import traceback
+        print("[fun_items_10] 调用 get_items_by_item_group_expanded_by_target_customers 异常: %s" % e)
+        print("[fun_items_10] traceback: %s" % traceback.format_exc())
+        print("[fun_items_10] ========== 结束(异常) ==========")
+        raise
 
 
 @frappe.whitelist(allow_guest=False)
