@@ -4,15 +4,20 @@
 产品物料清单 API：基于销售订单明细行，展开完整 BOM 层级结构。
 
 - get_product_bom_list: 获取单条产品物料清单详情（header + 扁平 items，含 level、bomCode）
+- list_bom_material_report: BOM 物料清单报表列表（数据源：BR SO BOM List 主表，一行 = 一订单 + 一成品）
 
 bench execute 示例:
     bench --site site2.local execute bairun_erp.utils.api.sales.sales_order_query_bom_details.get_product_bom_list --kwargs '{"sales_order_name": "SAL-ORD-2026-00003", "item_code": "配件_mm4io3o2ua3k"}'
+    bench --site site2.local execute bairun_erp.utils.api.sales.sales_order_query_bom_details.list_bom_material_report --kwargs '{"json_data": {"date_from": "2025-01-01", "date_to": "2026-12-31", "page_number": 1, "page_size": 20}}'
 """
 
 from __future__ import unicode_literals
 
+import json
+import math
+
 import frappe
-from frappe.utils import flt
+from frappe.utils import cint, flt, getdate
 
 from bairun_erp.utils.api.material.bom_query import _build_bom_tree, _get_item_tree_fields
 
@@ -586,6 +591,239 @@ def _collect_item_codes_from_flat(flat_nodes):
     return list(set(codes))
 
 
+def _parse_list_bom_material_report_kwargs(kwargs):
+    """支持直接 kwargs 或 json_data（字符串 / dict），与其它销售白名单一致。"""
+    jd = kwargs.get("json_data")
+    if jd is None:
+        jd = {k: v for k, v in kwargs.items() if k not in ("cmd",)}
+    if isinstance(jd, str):
+        try:
+            jd = json.loads(jd)
+        except (TypeError, ValueError):
+            jd = {}
+    if not isinstance(jd, dict):
+        jd = {}
+    return jd
+
+
+def _escape_like_pattern(text):
+    """避免 LIKE 通配符注入。"""
+    if not text:
+        return ""
+    return (
+        text.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
+def _display_bom_status(raw):
+    """主表 status 与前端展示文案对齐（未审核 / 已审核）。"""
+    s = (raw or "").strip().lower()
+    if s in ("draft", "未审核"):
+        return "未审核"
+    if s in ("approved", "submitted", "已审核"):
+        return "已审核"
+    if not (raw or "").strip():
+        return "未审核"
+    return (raw or "").strip()
+
+
+def _normalize_filter_bom_status(bom_status):
+    """筛选条件可与库内英文或中文状态兼容。"""
+    s = (bom_status or "").strip()
+    if not s:
+        return None
+    low = s.lower()
+    if low in ("未审核",) or low == "draft":
+        return ["status", "in", ["draft", "未审核"]]
+    if low in ("已审核",) or low in ("approved", "submitted"):
+        return ["status", "in", ["approved", "submitted", "已审核"]]
+    return ["status", "=", s]
+
+
+def _iso_date_ymd(val):
+    """API 统一输出 YYYY-MM-DD，与前端报表约定一致（不受用户日期格式影响）。"""
+    if not val:
+        return ""
+    try:
+        return getdate(val).strftime("%Y-%m-%d")
+    except Exception:
+        return (str(val) or "")[:10]
+
+
+def _row_to_bom_report_item(row, idx):
+    """BR SO BOM List 一行 -> 前端 BomReportRow 结构。"""
+    order_no = (row.get("order_no") or "").strip()
+    item_code = (row.get("item_code") or "").strip()
+    name = (row.get("name") or "").strip()
+    doc_id = name or "{}::{}::{}".format(order_no, item_code, idx)
+    delivery = row.get("delivery_date")
+    delivery_str = _iso_date_ymd(delivery) if delivery else ""
+    approved_on = row.get("approved_on")
+    audit_date_str = _iso_date_ymd(approved_on) if approved_on else ""
+
+    return {
+        "id": doc_id,
+        "bomStatus": _display_bom_status(row.get("status")),
+        "salesOrderNo": order_no,
+        "unitCode": (row.get("customer_code") or "").strip(),
+        "unitName": (row.get("customer_name") or "").strip(),
+        "itemCode": item_code,
+        "itemName": (row.get("item_name") or "").strip(),
+        "deliveryDate": delivery_str,
+        "materialAuditor": (row.get("approved_by") or "").strip(),
+        "materialAuditDate": audit_date_str,
+        "documentCreator": (row.get("created_by") or "").strip(),
+    }
+
+
+@frappe.whitelist(allow_guest=False)
+def list_bom_material_report(**kwargs):
+    """
+    BOM 物料清单报表 — 列表页数据。
+
+    数据源：**BR SO BOM List**（一行 = 销售订单号 + 成品物料），与同步写入的主表一致。
+    不展开子表 BR SO BOM List Details；明细页仍用 get_product_bom_list。
+
+    日期口径：**delivery_date（交货日期）** 闭区间 [date_from, date_to]。
+    无交货日期的主表记录不会命中日期筛选。
+
+    请求参数（可直接作为表单字段，或放在 json_data 内）:
+        date_from (str): 必填，YYYY-MM-DD
+        date_to (str): 必填，YYYY-MM-DD
+        page_number (int): 可选，默认 1
+        page_size (int): 可选，默认 20，最大 100
+        sales_order_name (str): 可选，精确匹配主表 order_no
+        customer (str): 可选，精确匹配 customer_code（单位编号）
+        customer_name (str): 可选，customer_name 模糊匹配
+        bom_status (str): 可选，与 bomStatus 展示一致时可传「未审核」「已审核」，或与库内 status 一致
+        item_code (str): 可选，存货编码模糊匹配
+
+    返回:
+        success=True: { "data": { "page_number", "page_size", "total_count", "total_pages", "items": [...] } }
+        success=False: { "message": "..." }
+
+    权限: 遵循 Frappe 对 DocType **BR SO BOM List** 的读权限（需能 read 该 DocType）。
+    """
+    jd = _parse_list_bom_material_report_kwargs(kwargs)
+    date_from = (jd.get("date_from") or "").strip()
+    date_to = (jd.get("date_to") or "").strip()
+
+    if not date_from or not date_to:
+        return {"success": False, "message": "date_from 与 date_to 不能为空（格式 YYYY-MM-DD）"}
+
+    try:
+        df = getdate(date_from)
+        dt = getdate(date_to)
+    except Exception:
+        return {"success": False, "message": "日期格式非法，请使用 YYYY-MM-DD"}
+
+    if df > dt:
+        return {"success": False, "message": "date_from 不能晚于 date_to"}
+
+    page_number = cint(jd.get("page_number") or 1, 1)
+    page_size = cint(jd.get("page_size") or 20, 20)
+    if page_number < 1:
+        page_number = 1
+    if page_size < 1:
+        page_size = 20
+    if page_size > 100:
+        page_size = 100
+
+    sales_order_name = (jd.get("sales_order_name") or "").strip()
+    customer = (jd.get("customer") or "").strip()
+    customer_name = (jd.get("customer_name") or "").strip()
+    bom_status = (jd.get("bom_status") or "").strip()
+    item_code = (jd.get("item_code") or "").strip()
+
+    filters = [
+        ["delivery_date", ">=", df],
+        ["delivery_date", "<=", dt],
+    ]
+
+    if sales_order_name:
+        filters.append(["order_no", "=", sales_order_name])
+    if customer:
+        filters.append(["customer_code", "=", customer])
+    if customer_name:
+        esc = _escape_like_pattern(customer_name)
+        filters.append(["customer_name", "like", "%" + esc + "%"])
+    if bom_status:
+        st_f = _normalize_filter_bom_status(bom_status)
+        if st_f:
+            filters.append(st_f)
+    if item_code:
+        esc = _escape_like_pattern(item_code)
+        filters.append(["item_code", "like", "%" + esc + "%"])
+
+    fields = [
+        "name",
+        "order_no",
+        "status",
+        "customer_code",
+        "customer_name",
+        "item_code",
+        "item_name",
+        "delivery_date",
+        "approved_by",
+        "approved_on",
+        "created_by",
+    ]
+
+    order_by = "delivery_date desc, order_no desc, item_code asc"
+
+    try:
+        frappe.has_permission("BR SO BOM List", "read", throw=True)
+    except frappe.PermissionError:
+        return {"success": False, "message": "无权限访问 BOM 物料清单报表"}
+
+    try:
+        total_list = frappe.get_list(
+            "BR SO BOM List",
+            filters=filters,
+            fields=["name"],
+            limit_page_length=0,
+            ignore_permissions=False,
+        )
+        total_count = len(total_list)
+
+        limit_start = (page_number - 1) * page_size
+        rows = frappe.get_list(
+            "BR SO BOM List",
+            filters=filters,
+            fields=fields,
+            order_by=order_by,
+            limit_start=limit_start,
+            limit_page_length=page_size,
+            ignore_permissions=False,
+        )
+
+        items = []
+        for i, row in enumerate(rows):
+            items.append(_row_to_bom_report_item(row, limit_start + i))
+
+        total_pages = int(math.ceil(float(total_count) / page_size)) if page_size else 0
+
+        return {
+            "success": True,
+            "message": None,
+            "data": {
+                "page_number": page_number,
+                "page_size": page_size,
+                "total_count": total_count,
+                "total_pages": total_pages,
+                "items": items,
+            },
+        }
+    except Exception as e:
+        frappe.log_error(
+            title="list_bom_material_report",
+            message=frappe.get_traceback(),
+        )
+        return {"success": False, "message": str(e)}
+
+
 @frappe.whitelist()
 def get_product_bom_list(sales_order_name=None, item_code=None):
     """
@@ -628,7 +866,16 @@ def get_product_bom_list(sales_order_name=None, item_code=None):
                 },
             }
 
-        # 始终处理所有 SO Detail 行（含无 BOM 的如 test0003）
+        # 若传入 item_code，仅处理该成品行（用于按「销售订单+成品」维度写入 BOM 两表）
+        if item_code:
+            so_items = [si for si in so_items if (si.item_code or "").strip() == item_code]
+            if not so_items:
+                return {
+                    "success": False,
+                    "message": "销售订单中未找到指定成品行: {}".format(item_code),
+                }
+
+        # 处理 SO Detail 行（全部或仅 item_code 指定的一行）
 
         flat = []
         for row_idx, so_item in enumerate(so_items):

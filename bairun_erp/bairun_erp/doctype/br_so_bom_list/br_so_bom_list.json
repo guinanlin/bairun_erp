@@ -1,0 +1,195 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:{order_no}-{item_code}",
+ "creation": "2026-03-19 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_basic",
+  "order_no",
+  "status",
+  "customer_code",
+  "customer_name",
+  "item_code",
+  "item_name",
+  "delivery_date",
+  "approved_by",
+  "approved_on",
+  "created_by",
+  "project_no",
+  "column_break_header",
+  "order_qty",
+  "sales_price",
+  "unit_estimated_cost",
+  "running_cost_rate",
+  "transport_fee_rate",
+  "tax_rate",
+  "gross_margin",
+  "section_break_warehouse",
+  "warehouse_code",
+  "warehouse_name",
+  "inventory_qty",
+  "section_break_details",
+  "details"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_basic",
+   "fieldtype": "Section Break",
+   "label": "基本信息"
+  },
+  {
+   "fieldname": "order_no",
+   "fieldtype": "Data",
+   "label": "销售订单号"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Data",
+   "label": "审核状态"
+  },
+  {
+   "fieldname": "customer_code",
+   "fieldtype": "Data",
+   "label": "单位编号(客户编号)"
+  },
+  {
+   "fieldname": "customer_name",
+   "fieldtype": "Data",
+   "label": "单位全名(客户全名)"
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Data",
+   "label": "存货编码(成品)"
+  },
+  {
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "存货全名(成品名称)"
+  },
+  {
+   "fieldname": "delivery_date",
+   "fieldtype": "Date",
+   "label": "交货日期"
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Data",
+   "label": "物料审核人"
+  },
+  {
+   "fieldname": "approved_on",
+   "fieldtype": "Datetime",
+   "label": "物料审核日期"
+  },
+  {
+   "fieldname": "created_by",
+   "fieldtype": "Data",
+   "label": "单据制单人"
+  },
+  {
+   "fieldname": "project_no",
+   "fieldtype": "Data",
+   "label": "项目号"
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "order_qty",
+   "fieldtype": "Float",
+   "label": "订单数量"
+  },
+  {
+   "fieldname": "sales_price",
+   "fieldtype": "Currency",
+   "label": "销售单价"
+  },
+  {
+   "fieldname": "unit_estimated_cost",
+   "fieldtype": "Currency",
+   "label": "单件产品成本(元/件)"
+  },
+  {
+   "fieldname": "running_cost_rate",
+   "fieldtype": "Percent",
+   "label": "运行成本比例(%)"
+  },
+  {
+   "fieldname": "transport_fee_rate",
+   "fieldtype": "Percent",
+   "label": "运输成本比例(%)"
+  },
+  {
+   "fieldname": "tax_rate",
+   "fieldtype": "Float",
+   "label": "税点"
+  },
+  {
+   "fieldname": "gross_margin",
+   "fieldtype": "Percent",
+   "label": "毛利率"
+  },
+  {
+   "fieldname": "section_break_warehouse",
+   "fieldtype": "Section Break",
+   "label": "成品仓库"
+  },
+  {
+   "fieldname": "warehouse_code",
+   "fieldtype": "Data",
+   "label": "成品仓库编码"
+  },
+  {
+   "fieldname": "warehouse_name",
+   "fieldtype": "Data",
+   "label": "成品仓库全名"
+  },
+  {
+   "fieldname": "inventory_qty",
+   "fieldtype": "Float",
+   "label": "成品库存数量"
+  },
+  {
+   "fieldname": "section_break_details",
+   "fieldtype": "Section Break",
+   "label": "BOM明细"
+  },
+  {
+   "fieldname": "details",
+   "fieldtype": "Table",
+   "label": "明细",
+   "options": "BR SO BOM List Details"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-03-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Bairun Erp",
+ "name": "BR SO BOM List",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

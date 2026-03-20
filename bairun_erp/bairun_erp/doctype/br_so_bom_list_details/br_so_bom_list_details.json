@@ -1,0 +1,164 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-03-19 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "row_no",
+  "item_code",
+  "level",
+  "bom_code",
+  "item_name",
+  "item_group",
+  "ratio_qty",
+  "required_qty_override",
+  "inventory_qty",
+  "supplier_code",
+  "supplier_name",
+  "process_name",
+  "estimated_cost",
+  "order_cost",
+  "warehouse_code",
+  "warehouse_name",
+  "warehouse_slot",
+  "order_status",
+  "order_confirmation_status",
+  "received_qty",
+  "unreceived_qty",
+  "loss_ratio",
+  "purchase_order_no"
+ ],
+ "fields": [
+  {
+   "fieldname": "row_no",
+   "fieldtype": "Int",
+   "label": "行号"
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Data",
+   "label": "存货编码"
+  },
+  {
+   "fieldname": "level",
+   "fieldtype": "Int",
+   "label": "BOM层级"
+  },
+  {
+   "fieldname": "bom_code",
+   "fieldtype": "Data",
+   "label": "BOM编码"
+  },
+  {
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "物料名称"
+  },
+  {
+   "fieldname": "item_group",
+   "fieldtype": "Data",
+   "label": "物料组"
+  },
+  {
+   "fieldname": "ratio_qty",
+   "fieldtype": "Float",
+   "label": "配比"
+  },
+  {
+   "fieldname": "required_qty_override",
+   "fieldtype": "Float",
+   "label": "需求数量覆盖值"
+  },
+  {
+   "fieldname": "inventory_qty",
+   "fieldtype": "Float",
+   "label": "库存数量"
+  },
+  {
+   "fieldname": "supplier_code",
+   "fieldtype": "Data",
+   "label": "供应商编号"
+  },
+  {
+   "fieldname": "supplier_name",
+   "fieldtype": "Data",
+   "label": "供应商全名"
+  },
+  {
+   "fieldname": "process_name",
+   "fieldtype": "Data",
+   "label": "工艺"
+  },
+  {
+   "fieldname": "estimated_cost",
+   "fieldtype": "Currency",
+   "label": "单价(单位预估成本)"
+  },
+  {
+   "fieldname": "order_cost",
+   "fieldtype": "Currency",
+   "label": "金额(物料总成本)"
+  },
+  {
+   "fieldname": "warehouse_code",
+   "fieldtype": "Data",
+   "label": "仓库编号"
+  },
+  {
+   "fieldname": "warehouse_name",
+   "fieldtype": "Data",
+   "label": "仓库全名"
+  },
+  {
+   "fieldname": "warehouse_slot",
+   "fieldtype": "Data",
+   "label": "库位"
+  },
+  {
+   "fieldname": "order_status",
+   "fieldtype": "Data",
+   "label": "生单状态"
+  },
+  {
+   "fieldname": "order_confirmation_status",
+   "fieldtype": "Data",
+   "label": "订单确认状态"
+  },
+  {
+   "fieldname": "received_qty",
+   "fieldtype": "Float",
+   "label": "到库数量"
+  },
+  {
+   "fieldname": "unreceived_qty",
+   "fieldtype": "Float",
+   "label": "未到库数量"
+  },
+  {
+   "fieldname": "loss_ratio",
+   "fieldtype": "Float",
+   "label": "损耗比"
+  },
+  {
+   "fieldname": "purchase_order_no",
+   "fieldtype": "Data",
+   "label": "采购订单编号"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-03-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Bairun Erp",
+ "name": "BR SO BOM List Details",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

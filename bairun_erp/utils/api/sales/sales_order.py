@@ -247,6 +247,18 @@ def save_sales_order(order_data=None, *args, **kwargs):
             so.insert(ignore_permissions=True)
             so.save(ignore_permissions=True)
 
+        # 保存成功后同步产品物料清单到 BR SO BOM List / BR SO BOM List Details
+        try:
+            from bairun_erp.utils.api.sales.sales_order_bom_sync import (
+                sync_bom_list_for_sales_order,
+            )
+            sync_bom_list_for_sales_order(so)
+        except Exception:
+            frappe.log_error(
+                title="BOM sync after save_sales_order",
+                message=frappe.get_traceback(),
+            )
+
         frappe.db.commit()
 
         return {
