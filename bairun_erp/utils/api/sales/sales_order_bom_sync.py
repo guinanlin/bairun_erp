@@ -90,10 +90,16 @@ def _build_bom_list_doc(so_doc, header, item_code, items, carton_items, packagin
         "details": [],
     }
 
-    # 合并 items + cartonItems + packagingItems，连续行号
+    # 合并 items + cartonItems + packagingItems。
+    # 业务约束：配比为 0 的物料不进入明细；其余行再做连续编号。
     all_rows = (items or []) + (carton_items or []) + (packaging_items or [])
-    for idx, row in enumerate(all_rows, start=1):
-        main["details"].append(_item_row_to_detail(row, idx))
+    row_no = 1
+    for row in all_rows:
+        ratio_qty = flt(row.get("ratioQty") or row.get("ratio_qty"), 0)
+        if ratio_qty == 0:
+            continue
+        main["details"].append(_item_row_to_detail(row, row_no))
+        row_no += 1
 
     return main
 
