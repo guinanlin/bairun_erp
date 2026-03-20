@@ -268,6 +268,205 @@ def _before_save_po(doc, order_data):
 	pass
 
 
+def _merge_purchase_order_no_field(existing, new_po):
+	"""多单号逗号拼接；已含同号则不变。"""
+	existing = (existing or "").strip()
+	new_po = (new_po or "").strip()
+	if not new_po:
+		return existing or ""
+	if not existing:
+		return new_po
+	parts = [p.strip() for p in existing.split(",") if p.strip()]
+	if new_po in parts:
+		return ",".join(parts)
+	parts.append(new_po)
+	return ",".join(parts)
+
+
+def _update_br_so_bom_detail_po_fields(detail_row_name, po_name):
+	"""回写 BR SO BOM List Details：采购单号 + 生单状态。"""
+	if not detail_row_name or not po_name:
+		return
+	if not frappe.db.exists("BR SO BOM List Details", detail_row_name):
+		return
+	existing = frappe.db.get_value("BR SO BOM List Details", detail_row_name, "purchase_order_no")
+	merged = _merge_purchase_order_no_field(existing, po_name)
+	frappe.db.set_value(
+		"BR SO BOM List Details",
+		detail_row_name,
+		{
+			"purchase_order_no": merged,
+			"order_status": "已生单",
+		},
+		update_modified=True,
+	)
+
+
+def _resolved_finished_item_code_for_bom_list(order_data, po_item):
+	"""BR SO BOM List 主表命名：{sales_order}-{成品 item_code}。"""
+	for key in ("bom_finished_item_code", "finished_item_code", "bomFinishedItemCode", "finishedItemCode"):
+		v = order_data.get(key) if isinstance(order_data, dict) else None
+		if v is not None and str(v).strip():
+			return str(v).strip()
+	if not getattr(po_item, "sales_order_item", None):
+		return ""
+	finished = frappe.db.get_value("Sales Order Item", po_item.sales_order_item, "item_code")
+	return (finished or "").strip()
+
+
+def _resolve_br_so_bom_parent_names(order_data, po_item, so_name):
+	"""返回可能命中的 BR SO BOM List 主表名列表。"""
+	if not so_name:
+		return []
+	explicit_finished = _resolved_finished_item_code_for_bom_list(order_data, po_item)
+	if explicit_finished:
+		return ["{0}-{1}".format(so_name, explicit_finished)]
+	# 当未传 sales_order_item 时，按 SO + 子表 item_code / supplier_code 反查 parent
+	item_code = (getattr(po_item, "item_code", None) or "").strip()
+	if not item_code:
+		return []
+	filters = {"order_no": so_name}
+	details_filters = {"item_code": item_code}
+	supplier = (getattr(po_item, "supplier", None) or "").strip()
+	if not supplier and getattr(po_item, "parent", None):
+		# po_item 没有 supplier 字段，回退用 PO 头 supplier（调用处会传 doc.supplier 再二次过滤）
+		supplier = ""
+	if supplier:
+		details_filters["supplier_code"] = supplier
+	parent_names = frappe.get_all(
+		"BR SO BOM List Details",
+		filters=details_filters,
+		fields=["parent"],
+		pluck="parent",
+	)
+	if not parent_names:
+		return []
+	valid = []
+	for parent_name in parent_names:
+		if frappe.db.exists("BR SO BOM List", {"name": parent_name, "order_no": so_name}):
+			valid.append(parent_name)
+	# 去重并保持顺序
+	seen = set()
+	out = []
+	for p in valid:
+		if p in seen:
+			continue
+		seen.add(p)
+		out.append(p)
+	return out
+
+
+def _sync_br_so_bom_list_details_from_saved_po(doc, order_data):
+	"""
+	一键生单成功后：把采购单号、生单状态写回 BR SO BOM List Details，
+	以便 get_product_bom_list_new 重拉列表与库内一致。
+
+	匹配优先级（每条 PO 明细一行）：
+	1) items[i].br_so_bom_list_detail_name / bom_list_detail_name（子表行 name，最准）
+	2) sales_order + 成品编码 + item_code + supplier_code（与明细行供应商一致）
+	3) 同上 + bom_code / bomCode（行上可选，用于重复物料行）
+	4) 仅 item_code 唯一则更新；否则更新 idx 最小的一行（保守）
+	"""
+	if not doc or not getattr(doc, "name", None):
+		return
+	order_data = order_data if isinstance(order_data, dict) else {}
+	items_od = order_data.get("items") or []
+	po_items = list(doc.items or [])
+	for idx, po_item in enumerate(po_items):
+		row_meta = items_od[idx] if idx < len(items_od) and isinstance(items_od[idx], dict) else {}
+		detail_name = (
+			(row_meta.get("br_so_bom_list_detail_name") or "").strip()
+			or (row_meta.get("bom_list_detail_name") or "").strip()
+			or (row_meta.get("brSoBomListDetailName") or "").strip()
+			or (row_meta.get("bomListDetailName") or "").strip()
+		)
+		if detail_name:
+			_update_br_so_bom_detail_po_fields(detail_name, doc.name)
+			continue
+		so_name = (getattr(po_item, "sales_order", None) or "").strip()
+		if not so_name:
+			so_name = (
+				(order_data.get("order_confirmation_no") or order_data.get("customer_order") or "")
+				.strip()
+			)
+		if not so_name:
+			continue
+		parent_names = _resolve_br_so_bom_parent_names(order_data, po_item, so_name)
+		if not parent_names:
+			continue
+		item_code = (getattr(po_item, "item_code", None) or "").strip()
+		if not item_code:
+			continue
+		supplier = (getattr(doc, "supplier", None) or "").strip()
+		bom_code_hint = (
+			(row_meta.get("bom_code") or row_meta.get("bomCode") or "").strip()
+		)
+		hit = False
+		for parent_name in parent_names:
+			base_filters = {"parent": parent_name, "item_code": item_code}
+		# 供应商一致（明细 supplier_code 常与 Supplier 主档 name 一致）
+			if supplier:
+				by_supp = frappe.get_all(
+					"BR SO BOM List Details",
+					filters=dict(base_filters, supplier_code=supplier),
+					pluck="name",
+					order_by="idx asc",
+				)
+				if len(by_supp) == 1:
+					_update_br_so_bom_detail_po_fields(by_supp[0], doc.name)
+					hit = True
+					break
+				if len(by_supp) > 1 and bom_code_hint:
+					by_bom = frappe.get_all(
+						"BR SO BOM List Details",
+						filters=dict(base_filters, supplier_code=supplier, bom_code=bom_code_hint),
+						pluck="name",
+						order_by="idx asc",
+					)
+					for nm in by_bom:
+						_update_br_so_bom_detail_po_fields(nm, doc.name)
+					if by_bom:
+						hit = True
+						break
+					_update_br_so_bom_detail_po_fields(by_supp[0], doc.name)
+					hit = True
+					break
+				if len(by_supp) > 1:
+					_update_br_so_bom_detail_po_fields(by_supp[0], doc.name)
+					hit = True
+					break
+			# 无供应商命中或未传 supplier：bom_code 提示
+			if bom_code_hint and not hit:
+				by_bom = frappe.get_all(
+					"BR SO BOM List Details",
+					filters=dict(base_filters, bom_code=bom_code_hint),
+					pluck="name",
+					order_by="idx asc",
+				)
+				if len(by_bom) == 1:
+					_update_br_so_bom_detail_po_fields(by_bom[0], doc.name)
+					hit = True
+					break
+				if len(by_bom) > 1:
+					_update_br_so_bom_detail_po_fields(by_bom[0], doc.name)
+					hit = True
+					break
+			if hit:
+				break
+			candidates = frappe.get_all(
+				"BR SO BOM List Details",
+				filters=base_filters,
+				pluck="name",
+				order_by="idx asc",
+			)
+			if len(candidates) == 1:
+				_update_br_so_bom_detail_po_fields(candidates[0], doc.name)
+				break
+			elif len(candidates) > 1:
+				_update_br_so_bom_detail_po_fields(candidates[0], doc.name)
+				break
+
+
 def _after_save_po(doc, order_data):
 	"""保存后钩子：若 PO 行带有 sales_order + sales_order_item，回写 Sales Order Item 的 purchase_order，使销售订单的 Connections 能显示本采购单。"""
 	for item in (doc.items or []):
@@ -282,6 +481,7 @@ def _after_save_po(doc, order_data):
 			doc.name,
 			update_modified=False,
 		)
+	_sync_br_so_bom_list_details_from_saved_po(doc, order_data or {})
 
 
 def _do_insert_save_po(order_data):
@@ -336,6 +536,20 @@ def _parse_order_data_list(order_data_list, kwargs):
 			return None
 	out = order_data_list if isinstance(order_data_list, list) else None
 	return out
+
+
+def _extract_line_item_code(order_data):
+	"""提取当前行的主物料编码（优先取第一条 items.item_code）。"""
+	if not isinstance(order_data, dict):
+		return ""
+	items = order_data.get("items") or []
+	if isinstance(items, list):
+		for row in items:
+			if isinstance(row, dict):
+				ic = (row.get("item_code") or "").strip()
+				if ic:
+					return ic
+	return ""
 
 
 @frappe.whitelist(allow_guest=False)
@@ -434,22 +648,69 @@ def save_purchase_orders(order_data_list=None, *args, **kwargs):
 
 		# 先整体校验，不写库
 		validated = []
+		line_results = []
 		for i, od in enumerate(order_data_list):
+			line_no = i + 1
+			line_item_code = _extract_line_item_code(od)
 			parsed = _parse_order_data(od, {})
 			to_validate = parsed if parsed is not None else od
 			result = _validate_order_data(to_validate)
 			if result is None or not isinstance(result, (tuple, list)) or len(result) != 2:
-				return {"error": _("校验返回异常，请检查第 {0} 条数据格式").format(i), "index": i}
+				line_results.append({
+					"line_no": line_no,
+					"item_code": line_item_code,
+					"success": False,
+					"purchase_order_no": None,
+					"order_status": "未生单",
+					"message": _("校验返回异常，请检查第 {0} 条数据格式").format(i),
+				})
+				return {
+					"success": False,
+					"error": _("校验返回异常，请检查第 {0} 条数据格式").format(i),
+					"index": i,
+					"data": {
+						"count": 0,
+						"line_results": line_results,
+					},
+				}
 			od, err = result
 			if err:
-				return {"error": err.get("error", str(err)), "index": i}
+				line_results.append({
+					"line_no": line_no,
+					"item_code": line_item_code or _extract_line_item_code(od),
+					"success": False,
+					"purchase_order_no": None,
+					"order_status": "未生单",
+					"message": err.get("error", str(err)),
+				})
+				return {
+					"success": False,
+					"error": err.get("error", str(err)),
+					"index": i,
+					"data": {
+						"count": 0,
+						"line_results": line_results,
+					},
+				}
 			validated.append(od)
+			line_results.append({
+				"line_no": line_no,
+				"item_code": _extract_line_item_code(od) or line_item_code,
+				"success": False,
+				"purchase_order_no": None,
+				"order_status": "未生单",
+				"message": "",
+			})
 
 		# 同一事务内依次 insert/save，不在此处 commit
 		docs = []
-		for order_data in validated:
+		for i, order_data in enumerate(validated):
 			po = _do_insert_save_po(order_data)
 			docs.append(po.as_dict())
+			line_results[i]["success"] = True
+			line_results[i]["purchase_order_no"] = po.name
+			line_results[i]["order_status"] = "已生单"
+			line_results[i]["message"] = ""
 
 		frappe.db.commit()
 
@@ -460,15 +721,22 @@ def save_purchase_orders(order_data_list=None, *args, **kwargs):
 				"count": len(docs),
 				"names": names,
 				"docs": docs,
+				"line_results": line_results,
 				"message": _("已批量保存并提交 {0} 张采购订单").format(len(docs)),
 			}
 		}
 	except frappe.ValidationError as e:
 		frappe.db.rollback()
-		return {"error": str(e)}
+		return {
+			"success": False,
+			"error": str(e),
+		}
 	except Exception as e:
 		frappe.db.rollback()
-		return {"error": str(e)}
+		return {
+			"success": False,
+			"error": str(e),
+		}
 
 
 def test_insert_one_po():

@@ -997,7 +997,13 @@ def _detail_row_to_product_bom_api_row(row, row_no, ig_parent_cache):
     if supp and not supp_name:
         supp_name = _get_supplier_name(supp) or supp_name
 
-    po = (getattr(row, "purchase_order_no", None) or "").strip() or None
+    po_raw = (getattr(row, "purchase_order_no", None) or "").strip()
+    po = po_raw or None
+    po_list = [x.strip() for x in po_raw.split(",") if x and x.strip()]
+    # 后端统一口径：有任意采购单号即视为已生单；无单号为未生单。
+    normalized_order_status = (getattr(row, "order_status", None) or "").strip()
+    if not normalized_order_status:
+        normalized_order_status = "已生单" if po_list else "未生单"
     oconf = (getattr(row, "order_confirmation_status", None) or "").strip() or ""
     slot = (getattr(row, "warehouse_slot", None) or "").strip() or None
 
@@ -1026,8 +1032,11 @@ def _detail_row_to_product_bom_api_row(row, row_no, ig_parent_cache):
         "supplierCode": supp,
         "supplierName": supp_name,
         "process": (getattr(row, "process_name", None) or "").strip(),
-        "orderStatus": (getattr(row, "order_status", None) or "未生单").strip(),
+        "orderStatus": normalized_order_status,
+        "order_status": normalized_order_status,
         "purchaseOrderNo": po,
+        "purchase_order_no": po,
+        "purchase_order_nos": po_list,
         "receivedQty": flt(rec_raw) if rec_raw is not None else None,
         "unreceivedQty": flt(unr_raw) if unr_raw is not None else None,
         "orderConfirmationStatus": oconf,
