@@ -13,6 +13,7 @@ from bairun_erp.utils.api.sales.sales_order_query_bom_details import (
     list_bom_material_report,
     _display_bom_status,
     _row_to_bom_report_item,
+    _sanitize_bom_report_order_by,
 )
 
 
@@ -86,6 +87,7 @@ class TestListBomMaterialReport(FrappeTestCase):
             "materialAuditor",
             "materialAuditDate",
             "documentCreator",
+            "creation",
         ]
         for k in required:
             self.assertIn(k, row)
@@ -120,9 +122,33 @@ class TestListBomMaterialReport(FrappeTestCase):
             "approved_by": "审核人",
             "approved_on": None,
             "created_by": "制单人",
+            "creation": "2026-03-10 14:22:33.000000",
         }
         item = _row_to_bom_report_item(row, 0)
         self.assertEqual(item["id"], "SO1-ITEM1")
         self.assertEqual(item["bomStatus"], "未审核")
         self.assertEqual(item["salesOrderNo"], "SO1")
         self.assertEqual(item["deliveryDate"], "2026-03-15")
+        self.assertEqual(item["creation"], "2026-03-10 14:22:33.000000")
+
+    def test_sanitize_bom_report_order_by(self):
+        self.assertEqual(
+            _sanitize_bom_report_order_by(None),
+            "creation desc, name desc",
+        )
+        self.assertEqual(
+            _sanitize_bom_report_order_by("creation asc"),
+            "creation asc, name desc",
+        )
+        self.assertEqual(
+            _sanitize_bom_report_order_by("delivery_date desc"),
+            "delivery_date desc, name desc",
+        )
+        self.assertEqual(
+            _sanitize_bom_report_order_by("name asc"),
+            "name asc",
+        )
+        self.assertEqual(
+            _sanitize_bom_report_order_by("bad_column desc"),
+            "creation desc, name desc",
+        )

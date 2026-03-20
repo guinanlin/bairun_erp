@@ -655,6 +655,60 @@ def _iso_date_ymd(val):
         return (str(val) or "")[:10]
 
 
+# list_bom_material_report：order_by 仅允许主表真实字段，防注入
+_BOM_REPORT_ORDER_COLS = frozenset(
+    {
+        "creation",
+        "modified",
+        "delivery_date",
+        "order_no",
+        "item_code",
+        "name",
+        "status",
+        "customer_code",
+        "customer_name",
+    }
+)
+
+
+def _sanitize_bom_report_order_by(order_by_raw):
+    """
+    默认 creation 降序；可选单字段 + asc/desc。
+    主排序非 name 时追加 name desc 作稳定次序，避免分页抖动。
+    """
+    default_col, default_dir = "creation", "desc"
+
+    def _full(primary_col, primary_dir):
+        if primary_col == "name":
+            return "{0} {1}".format(primary_col, primary_dir)
+        return "{0} {1}, name desc".format(primary_col, primary_dir)
+
+    ob = (order_by_raw or "").strip()
+    if not ob:
+        return _full(default_col, default_dir)
+    parts = ob.split()
+    col = (parts[0] or "").lower()
+    if col not in _BOM_REPORT_ORDER_COLS:
+        return _full(default_col, default_dir)
+    if len(parts) == 1:
+        direc = "desc"
+    else:
+        direc = "desc" if parts[1].lower() == "desc" else "asc"
+    return _full(col, direc)
+
+
+def _format_bom_report_creation(val):
+    """主表 creation 回传字符串，与前端约定一致（含微秒）。"""
+    if val is None or val == "":
+        return ""
+    if isinstance(val, str):
+        return val.strip()
+    try:
+        return val.strftime("%Y-%m-%d %H:%M:%S.%f")
+    except Exception:
+        return (str(val) or "").strip()
+
+
 def _row_to_bom_report_item(row, idx):
     """BR SO BOM List 一行 -> 前端 BomReportRow 结构。"""
     order_no = (row.get("order_no") or "").strip()
@@ -678,6 +732,7 @@ def _row_to_bom_report_item(row, idx):
         "materialAuditor": (row.get("approved_by") or "").strip(),
         "materialAuditDate": audit_date_str,
         "documentCreator": (row.get("created_by") or "").strip(),
+        "creation": _format_bom_report_creation(row.get("creation")),
     }
 
 
@@ -702,6 +757,7 @@ def list_bom_material_report(**kwargs):
         customer_name (str): 可选，customer_name 模糊匹配
         bom_status (str): 可选，与 bomStatus 展示一致时可传「未审核」「已审核」，或与库内 status 一致
         item_code (str): 可选，存货编码模糊匹配
+        order_by (str): 可选，默认 creation desc；仅允许主表字段（creation、modified、delivery_date 等），见实现内白名单
 
     返回:
         success=True: { "data": { "page_number", "page_size", "total_count", "total_pages", "items": [...] } }
@@ -739,6 +795,7 @@ def list_bom_material_report(**kwargs):
     customer_name = (jd.get("customer_name") or "").strip()
     bom_status = (jd.get("bom_status") or "").strip()
     item_code = (jd.get("item_code") or "").strip()
+    order_by = _sanitize_bom_report_order_by(jd.get("order_by"))
 
     filters = [
         ["delivery_date", ">=", df],
@@ -772,9 +829,8 @@ def list_bom_material_report(**kwargs):
         "approved_by",
         "approved_on",
         "created_by",
+        "creation",
     ]
-
-    order_by = "delivery_date desc, order_no desc, item_code asc"
 
     try:
         frappe.has_permission("BR SO BOM List", "read", throw=True)

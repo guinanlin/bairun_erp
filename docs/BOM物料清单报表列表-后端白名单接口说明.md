@@ -1,6 +1,8 @@
 # BOM 物料清单报表列表 — 后端白名单接口说明
 
-面向 **Next.js / FastAPI** 与前端工程师：列表页 `/scm/item/bom/product-bom` 的真实数据源。明细页仍使用 `get_product_bom_list`（按 `sales_order_name` / 可选 `item_code`）。
+面向 **Next.js / FastAPI** 与前端工程师：列表页 `/scm/item/bom/product-bom` 的真实数据源。明细页使用 `get_product_bom_list_new`（按 `sales_order_name` / 可选 `item_code`，读 BR SO BOM List 落库）。
+
+**ERP 实现（排序、`order_by`、`creation` 回传）**：见 **[BOM物料清单报表列表-按创建时间倒序-后端实现说明.md](./BOM物料清单报表列表-按创建时间倒序-后端实现说明.md)**。
 
 ---
 
@@ -19,7 +21,8 @@
 | 接口 | 用途 |
 |------|------|
 | **本接口** | 报表首页分页列表（索引行） |
-| `get_product_bom_list` | 单张销售订单下 BOM 展开（header + items + 纸箱/包材等） |
+| `get_product_bom_list_new` | 单张销售订单下物料清单明细（header + items + 纸箱/包材等），与列表同源落库 |
+| `get_product_bom_list` | （旧）实时 BOM 展开，前端可不再调用 |
 
 ---
 
@@ -49,24 +52,26 @@
 | `customer_name` | string | 否 | — | `customer_name` 模糊匹配 |
 | `bom_status` | string | 否 | — | 可传 `未审核` / `已审核`，或 `draft` / `approved` / `submitted`，或与库内 `status` 完全一致 |
 | `item_code` | string | 否 | — | 存货编码 **模糊** 匹配 |
+| `order_by` | string | 否 | `creation desc` | 列表排序；默认主表按 **`creation` 降序**（实现为 `creation desc, name desc` 稳定分页）；仅允许白名单字段，见 **[按创建时间倒序说明](./BOM物料清单报表列表-按创建时间倒序-后端实现说明.md)** |
 
 **示例（推荐：`json_data` 一包到底）**
 
 ```json
 {
-  "json_data": {
-    "date_from": "2026-01-01",
-    "date_to": "2026-12-31",
-    "page_number": 1,
-    "page_size": 20,
-    "sales_order_name": "",
-    "customer": "",
-    "customer_name": "",
-    "bom_status": "未审核",
-    "item_code": ""
-  }
+  "date_from": "2026-01-01",
+  "date_to": "2026-12-31",
+  "page_number": 1,
+  "page_size": 20,
+  "sales_order_name": "",
+  "customer": "",
+  "customer_name": "",
+  "bom_status": "未审核",
+  "item_code": "",
+  "order_by": "creation desc"
 }
 ```
+
+（经 FastAPI 时：上述对象放在请求体字段 `json_data` 内。）
 
 若你们网关把整段 body 当作方法参数解析，也可扁平传同级字段（无 `json_data` 包裹），效果相同。
 
@@ -97,7 +102,8 @@
         "deliveryDate": "2026-03-15",
         "materialAuditor": "",
         "materialAuditDate": "",
-        "documentCreator": "陈艳群"
+        "documentCreator": "陈艳群",
+        "creation": "2026-03-10 14:22:33.000000"
       }
     ]
   }
@@ -114,8 +120,9 @@
 | `deliveryDate` | `YYYY-MM-DD` |
 | `materialAuditor` / `materialAuditDate` | 主表 `approved_by` / `approved_on`（日期取日部分） |
 | `documentCreator` | 主表 `created_by` |
+| `creation` | 主表 **创建时间**（Frappe `creation`），用于排序与展示；服务端列表顺序以 `order_by` 为准 |
 
-**行号 `rowNo`**：可由前端按 `(page_number - 1) * page_size + index + 1` 计算，后端可不返回。
+**行号 `rowNo`**：由前端在**当前排序**（默认按 `creation` 倒序）下按 `(page_number - 1) * page_size + index + 1` 重算，后端可不返回。
 
 ### 失败
 
@@ -162,8 +169,9 @@ bench --site site2.local run-tests \
 | 说明 | 路径 |
 |------|------|
 | 白名单实现 | `bairun_erp/utils/api/sales/sales_order_query_bom_details.py` → `list_bom_material_report` |
+| 排序与 `creation` | [BOM物料清单报表列表-按创建时间倒序-后端实现说明.md](./BOM物料清单报表列表-按创建时间倒序-后端实现说明.md) |
 | 主表/字段说明 | `bairun_erp/doctype/br_so_bom_list/README.md` |
-| 明细接口 | 同文件 `get_product_bom_list` |
+| 明细接口 | 同文件 `get_product_bom_list_new`（及旧方法 `get_product_bom_list` 对照） |
 
 ---
 
