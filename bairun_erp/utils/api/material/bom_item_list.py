@@ -45,8 +45,10 @@ def _normalize_detail_row(row):
     if not isinstance(row, dict):
         frappe.throw("details 必须是对象数组")
 
+    # name：子表行主键；查询接口 get_product_bom_list_new 常以 id 回传同一值
+    _row_name = _pick(row, "name", "id")
     out = {
-        "name": (_pick(row, "name") or "").strip() or None,
+        "name": (_row_name or "").strip() or None,
         "row_no": _pick(row, "row_no", "rowNo"),
         "item_code": (_pick(row, "item_code", "itemCode") or "").strip(),
         "level": _pick(row, "level"),
