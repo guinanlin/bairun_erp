@@ -34,6 +34,28 @@ def _parse_tree(tree_data):
 	return tree_data
 
 
+def _parse_kwargs_json_data(kwargs):
+	"""兼容 /api/method 直传参数与 json_data 包装参数。"""
+	jd = kwargs.get("json_data")
+	if jd is None:
+		jd = {k: v for k, v in kwargs.items() if k not in ("cmd",)}
+	if isinstance(jd, str):
+		try:
+			jd = json.loads(jd)
+		except (TypeError, ValueError):
+			jd = {}
+	if not isinstance(jd, dict):
+		jd = {}
+	return jd
+
+
+def _pick(data, *keys):
+	for k in keys:
+		if k in data:
+			return data.get(k)
+	return None
+
+
 def _collect_nodes_depth_first(node, acc=None):
 	"""深度优先递归收集所有节点（含 node 自身）到 acc。"""
 	if acc is None:
@@ -357,6 +379,156 @@ def _build_bom_data_for_node(node, node_map, company):
 	return bom_data
 
 
+def _build_target_bom_items_from_tree(tree, company):
+	"""
+	基于当前画布根节点 children 生成目标 BOM items，并收集非法节点。
+	要求字段：item_code/item_name/bom_qty，warehouse/supplier 可选。
+	"""
+	children = tree.get("children") or []
+	items = []
+	failed_items = []
+
+	for child in children:
+		node_id = child.get("id") or ""
+		item_code = (child.get("item_code") or "").strip()
+		item_name = (child.get("item_name") or "").strip()
+		if not item_code:
+			failed_items.append({
+				"node_id": node_id,
+				"item_code": item_code,
+				"error": "item_code 不能为空",
+			})
+			continue
+		if not item_name:
+			failed_items.append({
+				"node_id": node_id,
+				"item_code": item_code,
+				"error": "item_name 不能为空",
+			})
+			continue
+
+		qty = child.get("bom_qty")
+		if qty in (None, ""):
+			failed_items.append({
+				"node_id": node_id,
+				"item_code": item_code,
+				"error": "bom_qty 不能为空",
+			})
+			continue
+		try:
+			qty = float(qty)
+		except Exception:
+			failed_items.append({
+				"node_id": node_id,
+				"item_code": item_code,
+				"error": "bom_qty 必须为数字",
+			})
+			continue
+		if qty <= 0:
+			failed_items.append({
+				"node_id": node_id,
+				"item_code": item_code,
+				"error": "bom_qty 必须大于 0",
+			})
+			continue
+
+		if not frappe.db.exists("Item", item_code):
+			failed_items.append({
+				"node_id": node_id,
+				"item_code": item_code,
+				"error": "物料不存在",
+			})
+			continue
+
+		warehouse = (child.get("warehouse") or (child.get("item_attrs") or {}).get("warehouse") or "").strip()
+		source_warehouse = _resolve_warehouse_name(warehouse, company) if warehouse else None
+		if warehouse and not source_warehouse:
+			failed_items.append({
+				"node_id": node_id,
+				"item_code": item_code,
+				"error": "warehouse 无法匹配到系统仓库",
+			})
+			continue
+
+		supplier = (child.get("supplier") or "").strip()
+		if supplier and (not frappe.db.exists("Supplier", supplier)):
+			failed_items.append({
+				"node_id": node_id,
+				"item_code": item_code,
+				"error": "supplier 不存在",
+			})
+			continue
+
+		uom = frappe.get_cached_value("Item", item_code, "stock_uom") or "Nos"
+		row = {
+			"node_id": node_id,
+			"item_code": item_code,
+			"item_name": item_name,
+			"qty": qty,
+			"uom": uom,
+			"source_warehouse": source_warehouse,
+			"supplier": supplier or None,
+		}
+		items.append(row)
+
+	return items, failed_items
+
+
+def _apply_bom_item_row_fields(row_doc, item_row):
+	"""仅写入 BOM Item 存在的字段，避免自定义字段差异导致报错。"""
+	row_doc.item_code = item_row["item_code"]
+	row_doc.qty = item_row["qty"]
+	if hasattr(row_doc, "uom"):
+		row_doc.uom = item_row.get("uom")
+	if hasattr(row_doc, "stock_uom"):
+		row_doc.stock_uom = item_row.get("uom")
+
+	meta = frappe.get_meta("BOM Item")
+	if meta.has_field("source_warehouse"):
+		row_doc.source_warehouse = item_row.get("source_warehouse")
+	if meta.has_field("supplier"):
+		row_doc.supplier = item_row.get("supplier")
+
+
+def _update_bom_items_merge(bom_doc, new_items):
+	"""
+	merge 策略：按 item_code 合并。
+	- 命中则更新（默认命中首条）
+	- 未命中则新增
+	- 不删除未传入行
+	"""
+	updated = 0
+	created = 0
+
+	existing_map = {}
+	for row in (bom_doc.items or []):
+		code = (row.item_code or "").strip()
+		if code and code not in existing_map:
+			existing_map[code] = row
+
+	for item_row in new_items:
+		target = existing_map.get(item_row["item_code"])
+		if target:
+			_apply_bom_item_row_fields(target, item_row)
+			updated += 1
+		else:
+			new_row = bom_doc.append("items", {})
+			_apply_bom_item_row_fields(new_row, item_row)
+			created += 1
+
+	return updated, created, 0
+
+
+def _update_bom_items_replace(bom_doc, new_items):
+	"""replace 策略：按画布全量替换 BOM items。"""
+	removed = len(bom_doc.items or [])
+	bom_doc.set("items", [])
+	for item_row in new_items:
+		new_row = bom_doc.append("items", {})
+		_apply_bom_item_row_fields(new_row, item_row)
+	return 0, len(new_items), removed
+
+
 def _run_step2_create_boms(tree, node_map):
 	"""
 	第二步：自底向上为有 children 的节点创建 BOM。
@@ -447,3 +619,100 @@ def create_bom_from_canvas_tree(tree_data):
 		"step1_complete": step1_complete,
 		"step2_complete": step2_complete,
 	}
+
+
+@frappe.whitelist(allow_guest=False)
+def update_bom_from_canvas_tree(**kwargs):
+	"""
+	更新指定 BOM 子项。
+	入参支持 json_data:
+	{
+	  "bom_name": "BOM-XXX",
+	  "tree_data": "{...}",
+	  "update_mode": "merge|replace"
+	}
+	"""
+	jd = _parse_kwargs_json_data(kwargs)
+	bom_name = (_pick(jd, "bom_name", "bomName") or "").strip()
+	tree_data = _pick(jd, "tree_data", "treeData")
+	update_mode = ((_pick(jd, "update_mode", "updateMode") or "merge")).strip().lower()
+
+	if not bom_name:
+		return {"success": False, "message": "bom_name 不能为空", "data": {"bom_name": "", "failed_items": []}}
+	if update_mode not in ("merge", "replace"):
+		return {
+			"success": False,
+			"message": "update_mode 仅支持 merge 或 replace",
+			"data": {"bom_name": bom_name, "failed_items": []},
+		}
+	if not frappe.db.exists("BOM", bom_name):
+		return {
+			"success": False,
+			"message": "BOM不存在或无权限更新",
+			"data": {"bom_name": bom_name, "failed_items": []},
+		}
+
+	try:
+		tree = _parse_tree(tree_data)
+		bom_doc = frappe.get_doc("BOM", bom_name)
+		frappe.has_permission("BOM", doc=bom_doc, ptype="write", throw=True)
+
+		company = bom_doc.company or _get_default_company()
+		new_items, failed_items = _build_target_bom_items_from_tree(tree, company)
+		if failed_items:
+			return {
+				"success": False,
+				"message": "存在非法节点，请修正后重试",
+				"data": {
+					"bom_name": bom_name,
+					"updated_items_count": 0,
+					"created_items_count": 0,
+					"removed_items_count": 0,
+					"failed_items": failed_items,
+				},
+			}
+
+		frappe.db.savepoint("update_bom_from_canvas_tree")
+		if update_mode == "replace":
+			updated_count, created_count, removed_count = _update_bom_items_replace(bom_doc, new_items)
+		else:
+			updated_count, created_count, removed_count = _update_bom_items_merge(bom_doc, new_items)
+
+		# 保留简要审计记录
+		bom_doc.add_comment(
+			"Edit",
+			"Canvas BOM update by {0}: mode={1}, updated={2}, created={3}, removed={4}".format(
+				frappe.session.user, update_mode, updated_count, created_count, removed_count
+			),
+		)
+		bom_doc.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		return {
+			"success": True,
+			"message": "更新成功",
+			"data": {
+				"bom_name": bom_name,
+				"updated_items_count": updated_count,
+				"created_items_count": created_count,
+				"removed_items_count": removed_count,
+				"failed_items": [],
+			},
+		}
+	except frappe.PermissionError:
+		return {
+			"success": False,
+			"message": "BOM不存在或无权限更新",
+			"data": {"bom_name": bom_name, "failed_items": []},
+		}
+	except Exception as e:
+		frappe.db.rollback(save_point="update_bom_from_canvas_tree")
+		frappe.log_error(
+			title="update_bom_from_canvas_tree",
+			message=frappe.get_traceback(),
+		)
+		return {
+			"success": False,
+			"message": str(e),
+			"data": {"bom_name": bom_name, "failed_items": []},
+		}
