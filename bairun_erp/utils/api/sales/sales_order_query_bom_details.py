@@ -3,11 +3,13 @@
 """
 产品物料清单 API：基于销售订单明细行，展开完整 BOM 层级结构。
 
-- get_product_bom_list: 获取单条产品物料清单详情（header + 扁平 items，含 level、bomCode）
+- get_product_bom_list: 获取单条产品物料清单详情（header + 扁平 items，含 level、bomCode）；数据源为 BOM + Item 实时展开
+- get_product_bom_list_new: 与上者返回结构相同，数据源为已同步的 BR SO BOM List + BR SO BOM List Details
 - list_bom_material_report: BOM 物料清单报表列表（数据源：BR SO BOM List 主表，一行 = 一订单 + 一成品）
 
 bench execute 示例:
     bench --site site2.local execute bairun_erp.utils.api.sales.sales_order_query_bom_details.get_product_bom_list --kwargs '{"sales_order_name": "SAL-ORD-2026-00003", "item_code": "配件_mm4io3o2ua3k"}'
+    bench --site site2.local execute bairun_erp.utils.api.sales.sales_order_query_bom_details.get_product_bom_list_new --kwargs '{"sales_order_name": "SAL-ORD-2026-00003", "item_code": "配件_mm4io3o2ua3k"}'
     bench --site site2.local execute bairun_erp.utils.api.sales.sales_order_query_bom_details.list_bom_material_report --kwargs '{"json_data": {"date_from": "2025-01-01", "date_to": "2026-12-31", "page_number": 1, "page_size": 20}}'
 """
 
@@ -15,6 +17,7 @@ from __future__ import unicode_literals
 
 import json
 import math
+import re
 
 import frappe
 from frappe.utils import cint, flt, getdate
@@ -684,7 +687,7 @@ def list_bom_material_report(**kwargs):
     BOM 物料清单报表 — 列表页数据。
 
     数据源：**BR SO BOM List**（一行 = 销售订单号 + 成品物料），与同步写入的主表一致。
-    不展开子表 BR SO BOM List Details；明细页仍用 get_product_bom_list。
+    不展开子表 BR SO BOM List Details；明细页可用 get_product_bom_list（实时 BOM）或 get_product_bom_list_new（已同步主从表）。
 
     日期口径：**delivery_date（交货日期）** 闭区间 [date_from, date_to]。
     无交货日期的主表记录不会命中日期筛选。
@@ -940,6 +943,233 @@ def get_product_bom_list(sales_order_name=None, item_code=None):
     except Exception as e:
         frappe.log_error(
             title="get_product_bom_list",
+            message=frappe.get_traceback(),
+        )
+        return {"success": False, "message": str(e)}
+
+
+_PKG_BOM_CODE_SUFFIX = re.compile(r"-P\d+$")
+
+
+def _br_so_bom_list_doc_name(order_no, finished_item_code):
+    return "{}-{}".format((order_no or "").strip(), (finished_item_code or "").strip())
+
+
+def _sort_bom_list_detail_rows(details):
+    rows = list(details or [])
+
+    def _key(r):
+        rn = getattr(r, "row_no", None)
+        if rn is not None:
+            return (0, cint(rn, 0))
+        return (1, cint(getattr(r, "idx", None), 0))
+
+    rows.sort(key=_key)
+    return rows
+
+
+def _split_stored_bom_detail_rows(detail_rows):
+    """与 sales_order_bom_sync 写入顺序一致：items + carton（bom_code 后缀 -C）+ packaging（-P 数字）。"""
+    items, cartons, packs = [], [], []
+    for row in detail_rows:
+        bc = (getattr(row, "bom_code", None) or "").strip()
+        if bc.endswith("-C"):
+            cartons.append(row)
+        elif _PKG_BOM_CODE_SUFFIX.search(bc):
+            packs.append(row)
+        else:
+            items.append(row)
+    return items, cartons, packs
+
+
+def _detail_row_to_product_bom_api_row(row, row_no, ig_parent_cache):
+    """BR SO BOM List Details 一行 -> get_product_bom_list 中单行结构（camelCase）。"""
+    item_group = (getattr(row, "item_group", None) or "").strip()
+    bom_code = (getattr(row, "bom_code", None) or "").strip()
+    item_code = (getattr(row, "item_code", None) or "").strip()
+    item_name = (getattr(row, "item_name", None) or "").strip() or item_code
+    wh = (getattr(row, "warehouse_code", None) or "").strip()
+    wh_name = (getattr(row, "warehouse_name", None) or "").strip()
+    supp = (getattr(row, "supplier_code", None) or "").strip()
+    supp_name = (getattr(row, "supplier_name", None) or "").strip()
+    if wh and not wh_name:
+        wh_name = _get_warehouse_name(wh) or wh_name
+    if supp and not supp_name:
+        supp_name = _get_supplier_name(supp) or supp_name
+
+    po = (getattr(row, "purchase_order_no", None) or "").strip() or None
+    oconf = (getattr(row, "order_confirmation_status", None) or "").strip() or ""
+    slot = (getattr(row, "warehouse_slot", None) or "").strip() or None
+
+    loss_raw = getattr(row, "loss_ratio", None)
+    inv_raw = getattr(row, "inventory_qty", None)
+    est_raw = getattr(row, "estimated_cost", None)
+    rec_raw = getattr(row, "received_qty", None)
+    unr_raw = getattr(row, "unreceived_qty", None)
+
+    return {
+        "id": getattr(row, "name", None) or "",
+        "rowNo": row_no,
+        "itemCode": item_code,
+        "level": cint(getattr(row, "level", None), 0) or 1,
+        "bomCode": bom_code,
+        "itemName": item_name,
+        "item_group": item_group,
+        "item_group_parent": ig_parent_cache.get(item_group, "") if item_group else "",
+        "ratioQty": flt(getattr(row, "ratio_qty", None)),
+        "inventoryQty": flt(inv_raw) if inv_raw is not None else None,
+        "estimatedCost": flt(est_raw) if est_raw is not None else None,
+        "lossRatio": flt(loss_raw) if loss_raw is not None else None,
+        "orderCost": flt(getattr(row, "order_cost", None) or 0),
+        "warehouseCode": wh,
+        "warehouseName": wh_name,
+        "supplierCode": supp,
+        "supplierName": supp_name,
+        "process": (getattr(row, "process_name", None) or "").strip(),
+        "orderStatus": (getattr(row, "order_status", None) or "未生单").strip(),
+        "purchaseOrderNo": po,
+        "receivedQty": flt(rec_raw) if rec_raw is not None else None,
+        "unreceivedQty": flt(unr_raw) if unr_raw is not None else None,
+        "orderConfirmationStatus": oconf,
+        "warehouseSlot": slot,
+        "itemGroup": item_group,
+    }
+
+
+def _load_flat_product_bom_rows_from_br_so_bom_list(order_no, finished_item_codes):
+    """
+    按销售订单行顺序依次读取 BR SO BOM List，拼接子表行（已按 row_no 排序）。
+    返回: (all_item_rows, all_carton_rows, all_pack_rows, missing_item_codes)
+    """
+    all_item_rows = []
+    all_carton_rows = []
+    all_pack_rows = []
+    missing = []
+    order_no = (order_no or "").strip()
+    for ic in finished_item_codes:
+        ic = (ic or "").strip()
+        if not ic:
+            continue
+        name = _br_so_bom_list_doc_name(order_no, ic)
+        if not frappe.db.exists("BR SO BOM List", name):
+            missing.append(ic)
+            continue
+        doc = frappe.get_doc("BR SO BOM List", name)
+        frappe.has_permission("BR SO BOM List", doc=doc, throw=True)
+        det = _sort_bom_list_detail_rows(getattr(doc, "details", None))
+        it, ct, pk = _split_stored_bom_detail_rows(det)
+        all_item_rows.extend(it)
+        all_carton_rows.extend(ct)
+        all_pack_rows.extend(pk)
+    return all_item_rows, all_carton_rows, all_pack_rows, missing
+
+
+@frappe.whitelist()
+def get_product_bom_list_new(sales_order_name=None, item_code=None):
+    """
+    与 get_product_bom_list 返回结构相同（header、items、cartonItems、packagingItems），
+    数据来自已同步的 **BR SO BOM List / BR SO BOM List Details**，不再实时展开 BOM。
+
+    入参、权限与 get_product_bom_list 一致。若对应主表记录不存在（尚未同步），返回失败说明。
+
+    未传 item_code 时按销售订单明细行顺序合并多张 BR SO BOM List（与实时接口多行成品行为一致）。
+    """
+    sales_order_name = (sales_order_name or "").strip()
+    item_code = (item_code or "").strip()
+
+    if not sales_order_name:
+        return {"success": False, "message": "sales_order_name 不能为空"}
+
+    try:
+        if not frappe.db.exists("Sales Order", sales_order_name):
+            return {"success": False, "message": "销售订单不存在或无权访问"}
+
+        so_doc = frappe.get_doc("Sales Order", sales_order_name)
+        frappe.has_permission("Sales Order", doc=so_doc, throw=True)
+
+        so_items = list(so_doc.items or [])
+        so_items = [si for si in so_items if (getattr(si, "item_code", None) or "").strip()]
+        if not so_items:
+            header = _build_header(so_doc, [])
+            return {
+                "success": True,
+                "data": {
+                    "header": header,
+                    "items": [],
+                    "cartonItems": [],
+                    "packagingItems": [],
+                },
+            }
+
+        if item_code:
+            so_items = [si for si in so_items if (getattr(si, "item_code", None) or "").strip() == item_code]
+            if not so_items:
+                return {
+                    "success": False,
+                    "message": "销售订单中未找到指定成品行: {}".format(item_code),
+                }
+
+        finished_codes = [(getattr(si, "item_code", None) or "").strip() for si in so_items]
+
+        item_rows, carton_rows, pack_rows, missing = _load_flat_product_bom_rows_from_br_so_bom_list(
+            sales_order_name, finished_codes
+        )
+        if missing:
+            return {
+                "success": False,
+                "message": "以下成品尚未同步 BR SO BOM List（请保存销售订单触发同步后再试）: {}".format(
+                    ", ".join(missing)
+                ),
+            }
+
+        ig_names = []
+        for r in item_rows + carton_rows + pack_rows:
+            ig = (getattr(r, "item_group", None) or "").strip()
+            if ig:
+                ig_names.append(ig)
+        ig_parent_cache = _get_item_group_parent_map(ig_names)
+
+        items = [
+            _detail_row_to_product_bom_api_row(r, i + 1, ig_parent_cache)
+            for i, r in enumerate(item_rows)
+        ]
+        carton_items = [
+            _detail_row_to_product_bom_api_row(r, i + 1, ig_parent_cache)
+            for i, r in enumerate(carton_rows)
+        ]
+        packaging_items = [
+            _detail_row_to_product_bom_api_row(r, i + 1, ig_parent_cache)
+            for i, r in enumerate(pack_rows)
+        ]
+
+        total_cost = sum(flt(r.get("orderCost") or 0) for r in items)
+        total_qty = sum(
+            flt(getattr(si, "qty", None) or getattr(si, "stock_qty", None) or 0) for si in so_items
+        )
+        unit_estimated_cost = round(total_cost / total_qty, 4) if total_qty else None
+
+        header = _build_header(so_doc, so_items)
+        header["unitEstimatedCost"] = unit_estimated_cost
+
+        sales_price = flt(header.get("salesPrice") or 0)
+        if sales_price and unit_estimated_cost is not None:
+            header["grossMargin"] = round((sales_price - unit_estimated_cost) / sales_price, 4)
+
+        return {
+            "success": True,
+            "data": {
+                "header": header,
+                "items": items,
+                "cartonItems": carton_items,
+                "packagingItems": packaging_items,
+            },
+        }
+
+    except frappe.PermissionError:
+        return {"success": False, "message": "销售订单不存在或无权访问"}
+    except Exception as e:
+        frappe.log_error(
+            title="get_product_bom_list_new",
             message=frappe.get_traceback(),
         )
         return {"success": False, "message": str(e)}

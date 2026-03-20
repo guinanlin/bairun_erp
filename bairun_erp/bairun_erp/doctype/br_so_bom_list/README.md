@@ -20,6 +20,10 @@
 BOM 物料清单报表**列表页**（多行分页、按交货日期等筛选）请使用白名单方法 **`list_bom_material_report`**（数据源即本主表，不返回子表 `details`）。实现路径：`bairun_erp.utils.api.sales.sales_order_query_bom_details.list_bom_material_report`。  
 **对接说明文档**：仓库内 `docs/BOM物料清单报表列表-后端白名单接口说明.md`。
 
+**明细页（与实时 BOM 展开同结构）**：若要以主从表为数据源、返回与 `get_product_bom_list` 相同的 `header` / `items` / `cartonItems` / `packagingItems`，请调用白名单方法 **`get_product_bom_list_new`**（`bairun_erp.utils.api.sales.sales_order_query_bom_details.get_product_bom_list_new`）。需已存在由销售订单保存同步生成的 BR SO BOM List 记录。
+
+**审核保存（主表更新 + 明细 Upsert）**：请调用白名单方法 **`audit_so_bom_list`**（`bairun_erp.utils.api.material.bom_item_list.audit_so_bom_list`）。对接文档：`docs/BOM物料清单审核-后端白名单接口说明.md`。
+
 ---
 
 ## 二、主表 BR SO BOM List 字段说明
