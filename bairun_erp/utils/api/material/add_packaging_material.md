@@ -12,6 +12,7 @@
 | **模块路径** | `bairun_erp.utils.api.material.item` |
 | **白名单** | 是（`@frappe.whitelist()`） |
 | **用途** | 按纸箱规格（长、宽、高）创建一条包材 Item，并可选写入供应商明细（单价、是否开票）。 |
+| **默认仓库** | 固定写入 Item 子表 **Item Default**：公司 **BR**，默认仓库 **半成品 - B**（不再从物料组 / 全局默认继承）。 |
 
 ---
 
@@ -54,6 +55,8 @@ bench --site site2.local execute 'bairun_erp.utils.api.material.item.add_packagi
 | `custom_weight`    | string | 否 | 吸塑等：重量，写入 Item.custom_weight；仅吸塑新增时前端会传。 |
 | `custom_number_of_holes` | number / string | 否 | 吸塑等：孔数，写入 Item.custom_number_of_holes；仅吸塑新增时前端会传。 |
 
+**默认仓库说明：** 创建 Item 时始终设置 `item_defaults` 为 **公司 BR + 仓库「半成品 - B」**。若该公司或该仓库不存在、或仓库所属公司与 BR 不一致，接口会报错并**不创建**物料。
+
 **`suppliers` 每项结构：**
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -83,6 +86,8 @@ bench --site site2.local execute 'bairun_erp.utils.api.material.item.add_packagi
 | `description`      | string | 物料描述。 |
 | `custom_weight`   | string | 重量（吸塑时写入）。 |
 | `custom_number_of_holes` | number | 孔数（吸塑时写入）。 |
+| `default_company` | string | 固定为 `BR`（与 Item 上默认仓库行一致）。 |
+| `default_warehouse` | string | 固定为 `半成品 - B`（Item 默认仓库）。 |
 
 ### 4.2 供应商明细 `supplier_items`
 
@@ -146,6 +151,9 @@ bench --site site2.local execute 'bairun_erp.utils.api.material.item.add_packagi
 | 传入的 `item_code` 已存在 | `物料编码 xxx 已存在，请换一个或留空由系统生成` |
 | **传入的供应商在系统中不存在** | **`以下供应商不存在：xxx, yyy，不允许添加包材。`（标题：供应商无效）——此时不会创建纸箱** |
 | Item 上未同步纸箱自定义字段 | `Item 上未找到自定义字段 "br_carton_length"，请先执行 migrate` |
+| 公司 BR 不存在 | `公司「BR」不存在，无法设置包材默认仓库。` |
+| 仓库「半成品 - B」不存在 | `包材默认仓库「半成品 - B」不存在，请先创建该仓库后再添加包材。` |
+| 仓库所属公司与 BR 不一致 | `仓库「半成品 - B」所属公司（…）与包材默认公司「BR」不一致。` |
 
 以上均通过 `frappe.throw()` 抛出，前端/API 会得到对应错误响应。
 
@@ -189,6 +197,6 @@ bench --site site2.local execute 'bairun_erp.utils.api.material.item.add_packagi
 2. 规格唯一性：同一物料组下若已存在相同长宽高的纸箱，直接报错。
 3. 物料编码：未传则生成 `CARTON-长-宽-高`；传入则校验不重复。
 4. 物料组：未传则默认「包材」。
-5. 创建 Item 并写入纸箱长宽高。
+5. 创建 Item 并写入纸箱长宽高；**Item Default** 固定为 **BR + 半成品 - B**。
 6. 供应商：未传 `suppliers` 则取系统全部供应商写入（单价 0、不开票）；传入则按列表写入单价与是否开票。
-7. 返回新建物料的编码、名称、规格、物料组、单位及 `supplier_items` 列表。
+7. 返回新建物料的编码、名称、规格、物料组、单位、`default_company` / `default_warehouse` 及 `supplier_items` 列表。

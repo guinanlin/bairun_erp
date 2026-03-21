@@ -171,6 +171,8 @@ class TestAddPackagingMaterial(FrappeTestCase):
 		"""调用 add_packaging_material 能成功添加一个包材（纸箱），且 Item 存在于库中"""
 		if not frappe.get_meta("Item").get_field("br_carton_length"):
 			self.skipTest('Custom field "br_carton_length" not found on Item (need migrate)')
+		if not frappe.db.exists("Warehouse", "半成品 - B"):
+			self.skipTest('需要存在仓库「半成品 - B」（BR）以校验包材默认仓库')
 
 		res = add_packaging_material(
 			item_code=self.test_item_code,
@@ -192,3 +194,9 @@ class TestAddPackagingMaterial(FrappeTestCase):
 		self.assertEqual(item.br_carton_length, self.test_length)
 		self.assertEqual(item.br_carton_width, self.test_width)
 		self.assertEqual(item.br_carton_height, self.test_height)
+		self.assertEqual(res.get("default_warehouse"), "半成品 - B")
+		self.assertEqual(res.get("default_company"), "BR")
+		rows = item.get("item_defaults") or []
+		self.assertTrue(rows)
+		self.assertEqual(rows[0].get("default_warehouse"), "半成品 - B")
+		self.assertEqual(rows[0].get("company"), "BR")

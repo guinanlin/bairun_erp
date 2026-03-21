@@ -8,6 +8,7 @@
 from __future__ import unicode_literals
 
 import json
+from collections import defaultdict
 
 import frappe
 
@@ -265,6 +266,144 @@ def _flt(val, default=0):
 		return default
 
 
+def _enrich_unfulfilled_rows_qc_pr(rows):
+	"""
+	为未交行批量补充 can_create_pr、pending_qc、latest_quality_inspection，避免前端 N+1。
+
+	pending_qc：已提交 PR、且该行尚无已提交质检单时，返回最早一条待检 PR 行（多 PR 时只取一个）。
+	latest_quality_inspection：与该 PO 行关联的已提交质检单中，按创建时间最新的一条单号。
+	"""
+	if not rows:
+		return
+
+	po_names = list({r.get("purchase_order") for r in rows if r.get("purchase_order")})
+	if not po_names:
+		for r in rows:
+			r["can_create_pr"] = _flt(r.get("outstanding_qty")) > 0
+			r["pending_qc"] = None
+			r["latest_quality_inspection"] = None
+		return
+
+	# 已提交 PR 下、关联到这些采购单的收货行（按 PR 过账日期、创建时间、行序 早优先）
+	pr_items = frappe.db.sql(
+		"""
+		SELECT pri.parent AS purchase_receipt, pri.name AS pr_item_name,
+			pri.purchase_order, pri.purchase_order_item, pri.item_code,
+			pr.posting_date, pr.creation
+		FROM `tabPurchase Receipt Item` pri
+		INNER JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent AND pr.docstatus = 1
+		WHERE pri.purchase_order IN %s
+		ORDER BY pr.posting_date ASC, pr.creation ASC, pri.idx ASC
+		""",
+		[po_names],
+		as_dict=True,
+	)
+
+	# (PO, PO Item name) -> 收货行列表
+	by_po_item = defaultdict(list)
+	# (PO, item_code) -> 收货行（仅 purchase_order_item 为空时用于兜底匹配）
+	by_po_itemcode = defaultdict(list)
+	for pri in pr_items:
+		po = pri.get("purchase_order")
+		poi = (pri.get("purchase_order_item") or "").strip()
+		if poi:
+			by_po_item[(po, poi)].append(pri)
+		else:
+			ic = pri.get("item_code")
+			if ic:
+				by_po_itemcode[(po, ic)].append(pri)
+
+	pairs = list(dict.fromkeys((p["purchase_receipt"], p["pr_item_name"]) for p in pr_items))
+	qi_by_pair = {}
+	if pairs:
+		# 已提交质检单：(PR 单号, PR 行 name) -> { name, creation }
+		placeholders = ", ".join(["(%s,%s)"] * len(pairs))
+		flat = [x for t in pairs for x in t]
+		qis = frappe.db.sql(
+			"""
+			SELECT reference_name, child_row_reference, name, creation
+			FROM `tabQuality Inspection`
+			WHERE reference_type = 'Purchase Receipt'
+			AND docstatus = 1
+			AND (reference_name, child_row_reference) IN ({})
+			""".format(placeholders),
+			flat,
+			as_dict=True,
+		)
+		for q in qis:
+			key = (q.get("reference_name"), q.get("child_row_reference"))
+			prev = qi_by_pair.get(key)
+			if not prev:
+				qi_by_pair[key] = q
+				continue
+			qc, pc = q.get("creation"), prev.get("creation")
+			if qc and (not pc or qc > pc):
+				qi_by_pair[key] = q
+
+	# 该采购单下、与 PO 行可能关联的已提交质检（用于 latest）
+	qi_rows_for_po = frappe.db.sql(
+		"""
+		SELECT pri.purchase_order, pri.purchase_order_item, pri.item_code,
+			qi.name AS qi_name, qi.creation
+		FROM `tabQuality Inspection` qi
+		INNER JOIN `tabPurchase Receipt Item` pri
+			ON pri.parent = qi.reference_name AND pri.name = qi.child_row_reference
+		WHERE qi.reference_type = 'Purchase Receipt'
+		AND qi.docstatus = 1
+		AND pri.purchase_order IN %s
+		""",
+		[po_names],
+		as_dict=True,
+	)
+
+	def _latest_qi_for_line(po, po_item_name, item_code):
+		best = None
+		for rec in qi_rows_for_po:
+			if rec.get("purchase_order") != po:
+				continue
+			poi = (rec.get("purchase_order_item") or "").strip()
+			if poi:
+				if poi != po_item_name:
+					continue
+			else:
+				if rec.get("item_code") != item_code:
+					continue
+			if not best:
+				best = rec
+			else:
+				rc, bc = rec.get("creation"), best.get("creation")
+				if rc and (not bc or rc > bc):
+					best = rec
+		return best.get("qi_name") if best else None
+
+	for r in rows:
+		outstanding = _flt(r.get("outstanding_qty"))
+		r["can_create_pr"] = outstanding > 0
+
+		po = r.get("purchase_order")
+		po_item_name = r.get("po_item_name")
+		item_code = r.get("item_code")
+
+		candidates = []
+		if po_item_name:
+			candidates = list(by_po_item.get((po, po_item_name)) or [])
+		if not candidates and item_code:
+			candidates = list(by_po_itemcode.get((po, item_code)) or [])
+
+		pending_qc = None
+		for pri in candidates:
+			key = (pri.get("purchase_receipt"), pri.get("pr_item_name"))
+			if key not in qi_by_pair:
+				pending_qc = {
+					"purchase_receipt": pri.get("purchase_receipt"),
+					"pr_item_name": pri.get("pr_item_name"),
+				}
+				break
+
+		r["pending_qc"] = pending_qc
+		r["latest_quality_inspection"] = _latest_qi_for_line(po, po_item_name, item_code)
+
+
 @frappe.whitelist()
 def get_purchase_order_unfulfilled_list(**kwargs):
 	"""
@@ -272,6 +411,12 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 	POST json_data: filters, order_by, limit_start, limit_page_length,
 	  search_customer_order, search_supplier, search_item_name
 	返回: { "message": [ 未交行对象, ... ], "total_count": 总条数 }
+
+	未交行对象除原有字段外包含：
+	- po_item_name: Purchase Order Item 的 name（用于与 PR 行、质检关联）
+	- can_create_pr: 是否允许从采购未交打开采购接收指向该行（默认可收量 > 0）
+	- pending_qc: 若有已提交 PR 行尚缺已提交质检，则为 { purchase_receipt, pr_item_name }，否则 null（多笔待检时取最早一张 PR）
+	- latest_quality_inspection: 与该 PO 行关联的已提交质检单号（最新一条），无则 null
 	"""
 	params = _parse_params(kwargs)
 	# 默认按采购单创建日期倒序，便于查看最新创建的未交单
@@ -293,6 +438,7 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 
 	select_parts = [
 		"po.name as purchase_order",
+		"item.name as po_item_name",
 		"po.supplier as supplier",
 		"po.supplier_name as supplier_name",
 		"po.transaction_date as transaction_date",
@@ -377,6 +523,7 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 		rate = _flt(r.get("rate"))
 		row = {
 			"purchase_order": r.get("purchase_order"),
+			"po_item_name": r.get("po_item_name"),
 			"customer_order": r.get("customer_order"),
 			"supplier": r.get("supplier"),
 			"supplier_name": r.get("supplier_name"),
@@ -397,6 +544,8 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 			"rowKey": "{}-{}".format(r.get("purchase_order") or "", r.get("idx") or (len(out) + 1)),
 		}
 		out.append(row)
+
+	_enrich_unfulfilled_rows_qc_pr(out)
 
 	frappe.response["message"] = out
 	frappe.response["total_count"] = total_count

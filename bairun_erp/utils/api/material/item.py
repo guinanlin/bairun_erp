@@ -291,6 +291,27 @@ def _ensure_supplier_items(doc, suppliers=None):
 		doc.save(ignore_permissions=True)
 
 
+# 包材新建 Item 时写入的默认公司与默认仓库（显式设置 item_defaults，不再走物料组/全局默认继承）
+PACKAGING_DEFAULT_COMPANY = "BR"
+PACKAGING_DEFAULT_WAREHOUSE = "半成品 - B"
+
+
+def _packaging_item_default_rows():
+	"""返回包材 Item 的 item_defaults 子表行；仓库须已存在且属于指定公司。"""
+	if not frappe.db.exists("Company", PACKAGING_DEFAULT_COMPANY):
+		frappe.throw(f"公司「{PACKAGING_DEFAULT_COMPANY}」不存在，无法设置包材默认仓库。")
+	if not frappe.db.exists("Warehouse", PACKAGING_DEFAULT_WAREHOUSE):
+		frappe.throw(
+			f"包材默认仓库「{PACKAGING_DEFAULT_WAREHOUSE}」不存在，请先创建该仓库后再添加包材。"
+		)
+	wh_company = frappe.db.get_value("Warehouse", PACKAGING_DEFAULT_WAREHOUSE, "company")
+	if wh_company != PACKAGING_DEFAULT_COMPANY:
+		frappe.throw(
+			f"仓库「{PACKAGING_DEFAULT_WAREHOUSE}」所属公司（{wh_company}）与包材默认公司「{PACKAGING_DEFAULT_COMPANY}」不一致。"
+		)
+	return [{"company": PACKAGING_DEFAULT_COMPANY, "default_warehouse": PACKAGING_DEFAULT_WAREHOUSE}]
+
+
 @frappe.whitelist()
 def add_packaging_material(
 	item_code: str | None = None,
@@ -311,6 +332,7 @@ def add_packaging_material(
 	若系统中已存在相同规格的纸箱，则拒绝添加并抛出错误。
 	可选写入供应商明细（单价、是否开票）；不传 suppliers 时自动取系统中全部供应商写入。
 	吸塑时前端传 br_carton_height="0"，重量与孔数通过 custom_weight、custom_number_of_holes 传入。
+	默认仓库：固定写入「半成品 - B」（公司 BR），不再从物料组 Item Default / 全局默认继承。
 
 	参数:
 		item_code: 可选。物料编码，不传则按规格生成（CARTON-长-宽-高）。
@@ -401,6 +423,7 @@ def add_packaging_material(
 	):
 		val = (custom_pallet_material or "").strip()
 		doc_dict["custom_pallet_material"] = val or None
+	doc_dict["item_defaults"] = _packaging_item_default_rows()
 	doc = frappe.get_doc(doc_dict)
 	doc.insert(ignore_permissions=True)
 
@@ -418,6 +441,8 @@ def add_packaging_material(
 		"description": getattr(doc, "description", None) or "",
 		"custom_weight": getattr(doc, "custom_weight", None) or "",
 		"custom_number_of_holes": getattr(doc, "custom_number_of_holes", None),
+		"default_company": PACKAGING_DEFAULT_COMPANY,
+		"default_warehouse": PACKAGING_DEFAULT_WAREHOUSE,
 	}
 	out["supplier_items"] = [
 		{

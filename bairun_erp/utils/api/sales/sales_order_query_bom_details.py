@@ -149,6 +149,37 @@ def _get_item_default_warehouse(item_code, company):
     return (val or "").strip()
 
 
+def _get_item_warehouse_stock_for_company(item_code, company):
+    """
+    按 Item Default（公司维度）取物料默认仓，并补仓库名称与 Bin 库存。
+    用于纸箱/包材等未走 BOM 展开的行，与 _build_items 中仓库口径一致。
+    """
+    item_code = (item_code or "").strip()
+    company = (company or "").strip()
+    if not item_code or not company or not frappe.db.exists("Item", item_code):
+        return "", "", None
+    wh = _get_item_default_warehouse(item_code, company)
+    if not wh:
+        return "", "", None
+    wh_name = _get_warehouse_name(wh) or ""
+    inv_qty = _get_bin_actual_qty(item_code, wh)
+    return wh, wh_name, inv_qty
+
+
+def _resolve_packaging_row_item_code_for_warehouse(br_packaging_item, br_packaging_model):
+    """
+    包材子表 br_packaging_item 为 Select（吸塑/PE膜等），一般不是 Item 编码；
+    实际物料编码常在 br_packaging_model（如 STO-ITEM-2026-00009、BLISTER-xxx）。
+    返回第一个在 Item 中存在的候选，用于 Item Default 取仓。
+    """
+    pitem = (br_packaging_item or "").strip()
+    pmodel = (br_packaging_model or "").strip()
+    for candidate in (pmodel, pitem):
+        if candidate and frappe.db.exists("Item", candidate):
+            return candidate
+    return ""
+
+
 def _get_finished_product_warehouse_and_stock(so_doc, first_so_item):
     """
     获取成品（BOM 顶层 / 首行 SO Item）的仓库与库存。
@@ -428,11 +459,13 @@ def _get_finished_product_from_component(component_item_code):
     return None
 
 
-def _build_carton_and_packaging_from_leaf_finished(flat_nodes, item_details_cache, so_items):
+def _build_carton_and_packaging_from_leaf_finished(flat_nodes, item_details_cache, so_items, company=None):
     """
     根据末级成品从 Item 主数据取 br_carton_spec、br_packaging_details，构建 cartonItems、packagingItems。
     同时处理：SO 行为组件时，其所属的 成品（BOM 根）若有纸箱/包材，也一并加入。
+    company：销售订单公司，用于 Item Default 默认仓（纸箱/包材物料）。
     """
+    company = (company or "").strip()
     leaf_finished = _get_leaf_finished_products(flat_nodes, item_details_cache)
     carton_items = []
     packaging_items = []
@@ -459,6 +492,7 @@ def _build_carton_and_packaging_from_leaf_finished(flat_nodes, item_details_cach
             if carton_ig not in ig_parent_cache:
                 ig_parent_cache.update(_get_item_group_parent_map([carton_ig]))
             carton_ig_parent = ig_parent_cache.get(carton_ig, "")
+            c_wh, c_wh_name, c_inv = _get_item_warehouse_stock_for_company(carton_spec, company)
             carton_items.append({
                 "id": "",
                 "rowNo": len(carton_items) + 1,
@@ -467,12 +501,12 @@ def _build_carton_and_packaging_from_leaf_finished(flat_nodes, item_details_cach
                 "bomCode": bom_code + "-C",
                 "itemName": carton_name,
                 "ratioQty": flt(packing_qty) if packing_qty else 1.0,
-                "inventoryQty": None,
+                "inventoryQty": c_inv,
                 "estimatedCost": price or None,
                 "lossRatio": None,
                 "orderCost": round(order_qty * path_ratio * (price / (packing_qty or 1)), 2) if packing_qty and price else 0,
-                "warehouseCode": "",
-                "warehouseName": "",
+                "warehouseCode": c_wh,
+                "warehouseName": c_wh_name,
                 "supplierCode": supplier,
                 "supplierName": _get_supplier_name(supplier),
                 "process": "",
@@ -501,6 +535,8 @@ def _build_carton_and_packaging_from_leaf_finished(flat_nodes, item_details_cach
             pprice = flt(getattr(pd, "br_price_one", None) or 0)
             pname = pitem + (" " + pmodel if pmodel else "")
             need_qty = (order_qty * path_ratio / RATIO_BASE) * pratio if pratio else 0
+            pack_ic = _resolve_packaging_row_item_code_for_warehouse(pitem, pmodel)
+            p_wh, p_wh_name, p_inv = _get_item_warehouse_stock_for_company(pack_ic, company)
             packaging_items.append({
                 "id": "",
                 "rowNo": len(packaging_items) + 1,
@@ -509,12 +545,12 @@ def _build_carton_and_packaging_from_leaf_finished(flat_nodes, item_details_cach
                 "bomCode": bom_code + "-P" + str(idx + 1),
                 "itemName": pname or pitem,
                 "ratioQty": pratio,
-                "inventoryQty": None,
+                "inventoryQty": p_inv,
                 "estimatedCost": pprice or None,
                 "lossRatio": None,
                 "orderCost": round(need_qty * pprice, 2) if pprice else 0,
-                "warehouseCode": "",
-                "warehouseName": "",
+                "warehouseCode": p_wh,
+                "warehouseName": p_wh_name,
                 "supplierCode": psupp,
                 "supplierName": _get_supplier_name(psupp),
                 "process": "",
@@ -548,12 +584,13 @@ def _build_carton_and_packaging_from_leaf_finished(flat_nodes, item_details_cach
             if carton_ig not in ig_parent_cache:
                 ig_parent_cache.update(_get_item_group_parent_map([carton_ig]))
             carton_ig_parent = ig_parent_cache.get(carton_ig, "")
+            c2_wh, c2_wh_name, c2_inv = _get_item_warehouse_stock_for_company(carton_spec, company)
             carton_items.append({
                 "id": "", "rowNo": len(carton_items) + 1, "itemCode": carton_spec, "level": 1,
                 "bomCode": bom_code + "-C", "itemName": carton_name, "ratioQty": flt(packing_qty) if packing_qty else 1.0,
-                "inventoryQty": None, "estimatedCost": price or None, "lossRatio": None,
+                "inventoryQty": c2_inv, "estimatedCost": price or None, "lossRatio": None,
                 "orderCost": round(order_qty * (price / (packing_qty or 1)), 2) if packing_qty and price else 0,
-                "warehouseCode": "", "warehouseName": "", "supplierCode": supplier,
+                "warehouseCode": c2_wh, "warehouseName": c2_wh_name, "supplierCode": supplier,
                 "supplierName": _get_supplier_name(supplier), "process": "", "orderStatus": "未生单",
                 "purchaseOrderNo": None, "receivedQty": None, "unreceivedQty": None,
                 "orderConfirmationStatus": "", "warehouseSlot": None,
@@ -569,12 +606,14 @@ def _build_carton_and_packaging_from_leaf_finished(flat_nodes, item_details_cach
             pprice = flt(getattr(pd, "br_price_one", None) or 0)
             pname = pitem + (" " + pmodel if pmodel else "")
             need_qty = (order_qty / RATIO_BASE) * pratio if pratio else 0
+            pack_ic2 = _resolve_packaging_row_item_code_for_warehouse(pitem, pmodel)
+            p2_wh, p2_wh_name, p2_inv = _get_item_warehouse_stock_for_company(pack_ic2, company)
             packaging_items.append({
                 "id": "", "rowNo": len(packaging_items) + 1, "itemCode": pitem or pname, "level": 1,
                 "bomCode": bom_code + "-P" + str(idx + 1), "itemName": pname or pitem, "ratioQty": pratio,
-                "inventoryQty": None, "estimatedCost": pprice or None, "lossRatio": None,
+                "inventoryQty": p2_inv, "estimatedCost": pprice or None, "lossRatio": None,
                 "orderCost": round(need_qty * pprice, 2) if pprice else 0,
-                "warehouseCode": "", "warehouseName": "", "supplierCode": psupp,
+                "warehouseCode": p2_wh, "warehouseName": p2_wh_name, "supplierCode": psupp,
                 "supplierName": _get_supplier_name(psupp), "process": "", "orderStatus": "未生单",
                 "purchaseOrderNo": None, "receivedQty": None, "unreceivedQty": None,
                 "orderConfirmationStatus": "", "warehouseSlot": None,
@@ -971,7 +1010,9 @@ def get_product_bom_list(sales_order_name=None, item_code=None):
         first_so_item = so_items[0] if so_items else None
         finished_product_wh = _get_finished_product_warehouse_and_stock(so_doc, first_so_item)
         items = _build_items(flat, item_details_cache, finished_product_wh=finished_product_wh)
-        carton_items, packaging_items = _build_carton_and_packaging_from_leaf_finished(flat, item_details_cache, so_items)
+        carton_items, packaging_items = _build_carton_and_packaging_from_leaf_finished(
+            flat, item_details_cache, so_items, company=getattr(so_doc, "company", None) or ""
+        )
 
         total_cost = sum(flt(r.get("orderCost") or 0) for r in items)
         total_qty = sum(flt(si.get("qty") or si.get("stock_qty") or 0) for si in so_items)
