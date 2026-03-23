@@ -67,6 +67,7 @@
 | `specs[].width` | number \| null | 宽。 |
 | `specs[].height` | number \| null | 高。 |
 | `specs[].product_requirements` | string | 产品要求（Item.description）。 |
+| `specs[].work_instruction_url` | string \| null | 作业指导书图片 URL（Item.custom_work_instruction_url）；无则为 `null`。 |
 | `specs[].amounts` | (number \| null)[] | 与 `suppliers` 顺序一致，每个供应商在该规格下的单价；无则 null。 |
 | `total` | int | 该分类下规格总数（用于分页）。 |
 | `page` | int | 当前页码。 |

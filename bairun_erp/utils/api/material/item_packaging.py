@@ -83,7 +83,7 @@ def get_packaging_material_page(
 		  "item_group": "纸箱",
 		  "category": "box",
 		  "suppliers": [{"id", "name", "unit_price", "invoice_enabled"}, ...],
-		  "specs": [{"id", "length", "width", "height", "product_requirements", "amounts": [num?, ...]}, ...],
+		  "specs": [{"id", "length", "width", "height", "product_requirements", "work_instruction_url", "amounts": [num?, ...]}, ...],
 		  "total": N,
 		  "page": P,
 		  "page_size": S
@@ -105,6 +105,9 @@ def get_packaging_material_page(
 	meta = frappe.get_meta("Item")
 	has_carton = all(meta.get_field(f) for f in ("br_carton_length", "br_carton_width", "br_carton_height"))
 	has_pallet_material = bool(meta.get_field("custom_pallet_material")) and frappe.db.has_column("Item", "custom_pallet_material")
+	has_work_instruction_url = bool(meta.get_field("custom_work_instruction_url")) and frappe.db.has_column(
+		"Item", "custom_work_instruction_url"
+	)
 	if not has_carton:
 		return {
 			"item_group": group_name,
@@ -123,6 +126,8 @@ def get_packaging_material_page(
 	item_fields = ["name", "description", "br_carton_length", "br_carton_width", "br_carton_height"]
 	if has_pallet_material:
 		item_fields.append("custom_pallet_material")
+	if has_work_instruction_url:
+		item_fields.append("custom_work_instruction_url")
 	items = frappe.get_all(
 		"Item",
 		filters=filters,
@@ -213,7 +218,7 @@ def get_packaging_material_page(
 		item_code = i.get("name")
 		sup_map = item_suppliers.get(item_code, {})
 		amounts = [sup_map.get(s["id"], (None, False, 1.0))[0] for s in suppliers]
-		specs.append({
+		row = {
 			"id": item_code,
 			"length": _float_or_none(i.get("br_carton_length")),
 			"width": _float_or_none(i.get("br_carton_width")),
@@ -221,7 +226,13 @@ def get_packaging_material_page(
 			"material": (i.get("custom_pallet_material") or None) if has_pallet_material else None,
 			"product_requirements": (i.get("description") or "").strip(),
 			"amounts": amounts,
-		})
+		}
+		if has_work_instruction_url:
+			wiu = (i.get("custom_work_instruction_url") or "").strip()
+			row["work_instruction_url"] = wiu if wiu else None
+		else:
+			row["work_instruction_url"] = None
+		specs.append(row)
 
 	return {
 		"item_group": group_name,

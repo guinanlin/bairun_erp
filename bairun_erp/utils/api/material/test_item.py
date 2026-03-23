@@ -155,16 +155,13 @@ class TestAddPackagingMaterial(FrappeTestCase):
 		self.test_length = "0.301"
 		self.test_width = "0.302"
 		self.test_height = "0.303"
-		self.test_item_code = "__BR_TEST_CARTON__"
-		# 若之前测试遗留，先删掉以便本次能成功添加
-		if frappe.db.exists("Item", self.test_item_code):
-			frappe.delete_doc("Item", self.test_item_code, force=1, ignore_permissions=True)
-			frappe.db.commit()
+		self.created_item_code = None
 
 	def tearDown(self):
-		# 清理：删除测试纸箱，便于下次运行
-		if frappe.db.exists("Item", self.test_item_code):
-			frappe.delete_doc("Item", self.test_item_code, force=1, ignore_permissions=True)
+		# 清理：删除本用例创建的 Item（站点若为 Naming Series，item_code 为流水号而非传入值）
+		code = self.created_item_code
+		if code and frappe.db.exists("Item", code):
+			frappe.delete_doc("Item", code, force=1, ignore_permissions=True)
 			frappe.db.commit()
 
 	def test_add_packaging_material_succeeds_and_item_exists(self):
@@ -175,22 +172,22 @@ class TestAddPackagingMaterial(FrappeTestCase):
 			self.skipTest('需要存在仓库「半成品 - B」（BR）以校验包材默认仓库')
 
 		res = add_packaging_material(
-			item_code=self.test_item_code,
 			br_carton_length=self.test_length,
 			br_carton_width=self.test_width,
 			br_carton_height=self.test_height,
 			item_name="测试纸箱",
 		)
+		self.created_item_code = res.get("item_code")
 
 		self.assertIn("item_code", res)
-		self.assertEqual(res["item_code"], self.test_item_code)
+		self.assertTrue(self.created_item_code, "应返回创建后的 item_code")
 		self.assertEqual(res["br_carton_length"], self.test_length)
 		self.assertEqual(res["br_carton_width"], self.test_width)
 		self.assertEqual(res["br_carton_height"], self.test_height)
 		self.assertIn("item_name", res)
-		self.assertTrue(frappe.db.exists("Item", self.test_item_code), "纸箱 Item 应已写入数据库")
+		self.assertTrue(frappe.db.exists("Item", self.created_item_code), "纸箱 Item 应已写入数据库")
 
-		item = frappe.get_cached_doc("Item", self.test_item_code)
+		item = frappe.get_cached_doc("Item", self.created_item_code)
 		self.assertEqual(item.br_carton_length, self.test_length)
 		self.assertEqual(item.br_carton_width, self.test_width)
 		self.assertEqual(item.br_carton_height, self.test_height)

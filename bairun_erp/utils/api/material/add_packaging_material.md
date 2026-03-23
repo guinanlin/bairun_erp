@@ -51,9 +51,12 @@ bench --site site2.local execute 'bairun_erp.utils.api.material.item.add_packagi
 | `item_group`       | string | 否 | 物料组。不传默认「包材」；可传包材下的子组（如「纸箱」「其他」等）以区分包材类型，使添加更通用。 |
 | `stock_uom`        | string | 否 | 库存单位。默认 `"Nos"`。 |
 | `suppliers`        | string / list | 否 | 供应商列表。见下表。不传则自动取系统中**全部**供应商写入，单价、是否开票均为 0。 |
-| `description`      | string | 否 | 包材 Item 的描述（Item.description）。 |
+| `description`      | string | 否 | 包材 Item 的描述（Item.description），仅产品要求文本；勿将作业指导书 URL 写入此字段。 |
 | `custom_weight`    | string | 否 | 吸塑等：重量，写入 Item.custom_weight；仅吸塑新增时前端会传。 |
 | `custom_number_of_holes` | number / string | 否 | 吸塑等：孔数，写入 Item.custom_number_of_holes；仅吸塑新增时前端会传。 |
+| `custom_work_instruction_url` | string | 否 | 作业指导书图片完整 HTTPS URL（如天翼云 OSS），写入 Item.custom_work_instruction_url；泡沫垫板等场景使用。 |
+
+**`json_data`：** 可将上述参数（含 `custom_work_instruction_url`）放入 `json_data` 对象内传递；与顶层同名字段同时存在时，**以顶层字段为准**。
 
 **默认仓库说明：** 创建 Item 时始终设置 `item_defaults` 为 **公司 BR + 仓库「半成品 - B」**。若该公司或该仓库不存在、或仓库所属公司与 BR 不一致，接口会报错并**不创建**物料。
 
@@ -86,6 +89,7 @@ bench --site site2.local execute 'bairun_erp.utils.api.material.item.add_packagi
 | `description`      | string | 物料描述。 |
 | `custom_weight`   | string | 重量（吸塑时写入）。 |
 | `custom_number_of_holes` | number | 孔数（吸塑时写入）。 |
+| `custom_work_instruction_url` | string | 作业指导书图片 URL；未传或字段未同步时为 `""`。 |
 | `default_company` | string | 固定为 `BR`（与 Item 上默认仓库行一致）。 |
 | `default_warehouse` | string | 固定为 `半成品 - B`（Item 默认仓库）。 |
 

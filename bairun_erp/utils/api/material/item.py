@@ -312,21 +312,22 @@ def _packaging_item_default_rows():
 	return [{"company": PACKAGING_DEFAULT_COMPANY, "default_warehouse": PACKAGING_DEFAULT_WAREHOUSE}]
 
 
+def _parse_packaging_material_kwargs(kwargs):
+	"""合并 json_data 与顶层参数（顶层覆盖 json_data），供 add_packaging_material 使用。"""
+	jd = kwargs.get("json_data")
+	if isinstance(jd, str):
+		try:
+			jd = json.loads(jd)
+		except (TypeError, ValueError):
+			jd = {}
+	if not isinstance(jd, dict):
+		jd = {}
+	overlay = {k: v for k, v in kwargs.items() if k not in ("cmd", "json_data")}
+	return {**jd, **overlay}
+
+
 @frappe.whitelist()
-def add_packaging_material(
-	item_code: str | None = None,
-	item_name: str | None = None,
-	br_carton_length: str | None = None,
-	br_carton_width: str | None = None,
-	br_carton_height: str | None = None,
-	item_group: str | None = None,
-	stock_uom: str | None = None,
-	suppliers: str | list | None = None,
-	description: str | None = None,
-	custom_weight: str | None = None,
-	custom_number_of_holes: int | None = None,
-	custom_pallet_material: str | None = None,
-):
+def add_packaging_material(**kwargs):
 	"""
 	添加包材：按规格（纸箱长、宽、高）创建一条包材 Item。
 	若系统中已存在相同规格的纸箱，则拒绝添加并抛出错误。
@@ -335,6 +336,7 @@ def add_packaging_material(
 	默认仓库：固定写入「半成品 - B」（公司 BR），不再从物料组 Item Default / 全局默认继承。
 
 	参数:
+		支持直传字段，或将字段放在 json_data（dict / JSON 字符串）内；同名字段以顶层为准。
 		item_code: 可选。物料编码，不传则按规格生成（CARTON-长-宽-高）。
 		item_name: 可选。物料名称，默认用 item_code 或规格描述。
 		br_carton_length: 必填。纸箱长度（吸塑时为长）。
@@ -343,17 +345,33 @@ def add_packaging_material(
 		item_group: 可选。物料组。不传默认「包材」；可传包材下的子组（如「纸箱」「吸塑」等）以区分包材类型。
 		stock_uom: 可选。库存单位，默认 "Nos"。
 		suppliers: 可选。供应商列表，JSON 或 list，每项 {supplier, custom_price?, custom_isinvoice?, supplier_part_no?}。不传则用系统中全部供应商，单价/开票默认 0。
-		description: 可选。包材 Item 的描述（Item.description）。
+		description: 可选。包材 Item 的描述（Item.description），仅产品要求文本，勿含作业指导书 URL。
 		custom_weight: 可选。吸塑等：重量，写入 Item.custom_weight；仅吸塑新增时前端会传。
 		custom_number_of_holes: 可选。吸塑等：孔数，写入 Item.custom_number_of_holes；仅吸塑新增时前端会传。
+		custom_work_instruction_url: 可选。作业指导书图片完整 HTTPS URL，写入 Item.custom_work_instruction_url（如泡沫垫板）。
 
 	返回:
-		{"item_code": "...", "item_name": "...", "description": "...", "supplier_items": [...], "custom_weight": ..., "custom_number_of_holes": ..., ...}
+		{"item_code": "...", "item_name": "...", "description": "...", "supplier_items": [...], "custom_weight": ..., "custom_number_of_holes": ..., "custom_work_instruction_url": ..., ...}
 
 	异常:
 		同一物料组下规格已存在时: frappe.ValidationError "该物料组下此纸箱规格已存在"
 		传入的供应商不存在时: frappe.ValidationError "以下供应商不存在：xxx，不允许添加包材。"（标题：供应商无效）
 	"""
+	p = _parse_packaging_material_kwargs(kwargs)
+	item_code = p.get("item_code")
+	item_name = p.get("item_name")
+	br_carton_length = p.get("br_carton_length")
+	br_carton_width = p.get("br_carton_width")
+	br_carton_height = p.get("br_carton_height")
+	item_group = p.get("item_group")
+	stock_uom = p.get("stock_uom")
+	suppliers = p.get("suppliers")
+	description = p.get("description")
+	custom_weight = p.get("custom_weight")
+	custom_number_of_holes = p.get("custom_number_of_holes")
+	custom_pallet_material = p.get("custom_pallet_material")
+	custom_work_instruction_url = p.get("custom_work_instruction_url")
+
 	l = (br_carton_length or "").strip()
 	w = (br_carton_width or "").strip()
 	h = (br_carton_height or "").strip()
@@ -423,6 +441,14 @@ def add_packaging_material(
 	):
 		val = (custom_pallet_material or "").strip()
 		doc_dict["custom_pallet_material"] = val or None
+	if (
+		custom_work_instruction_url is not None
+		and meta.get_field("custom_work_instruction_url")
+		and frappe.db.has_column("Item", "custom_work_instruction_url")
+	):
+		wiu = (custom_work_instruction_url or "").strip()
+		if wiu:
+			doc_dict["custom_work_instruction_url"] = wiu
 	doc_dict["item_defaults"] = _packaging_item_default_rows()
 	doc = frappe.get_doc(doc_dict)
 	doc.insert(ignore_permissions=True)
@@ -441,6 +467,9 @@ def add_packaging_material(
 		"description": getattr(doc, "description", None) or "",
 		"custom_weight": getattr(doc, "custom_weight", None) or "",
 		"custom_number_of_holes": getattr(doc, "custom_number_of_holes", None),
+		"custom_work_instruction_url": (getattr(doc, "custom_work_instruction_url", None) or "").strip()
+		if meta.get_field("custom_work_instruction_url")
+		else "",
 		"default_company": PACKAGING_DEFAULT_COMPANY,
 		"default_warehouse": PACKAGING_DEFAULT_WAREHOUSE,
 	}
