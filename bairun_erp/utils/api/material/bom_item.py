@@ -12,6 +12,11 @@ import frappe
 
 from bairun_erp.utils.api.items import save_item_bom_structure
 from bairun_erp.utils.api.material.item import _get_default_leaf_name
+from bairun_erp.utils.api.material.item_attrs_apply import (
+	apply_item_attrs,
+	apply_item_warehouse,
+	resolve_warehouse_name,
+)
 
 
 # --- 工具层 ---
@@ -88,116 +93,6 @@ def _get_bom_nodes_bottom_up(nodes):
 
 
 # --- 第一步：Item 创建/验证 ---
-
-# Item 主表可从 item_attrs 写入的字段
-_ITEM_ATTRS_MAIN_FIELDS = (
-	"br_packing_qty",
-	"br_turnover",
-	"br_carton_spec",
-	"br_volume",
-	"br_carton_length",
-	"br_carton_width",
-	"br_carton_height",
-	"br_supplier",
-	"br_price",
-	"br_quality_inspection",
-	"br_has_mark",
-	"br_mark_document",
-	"br_mark_document_name",
-)
-
-# 子表字段名
-_ITEM_ATTRS_CHILD_TABLES = ("br_process_suppliers", "br_packaging_details", "br_pallet_selections")
-
-
-def _apply_item_attrs(item_doc, item_attrs):
-	"""
-	将 item_attrs 中的主表字段和子表数据应用到 Item 文档。
-	不执行 save，由调用方负责。
-	"""
-	if not item_attrs or not isinstance(item_attrs, dict):
-		return
-
-	# 主表字段：非 null 且非空字符串时写入
-	for k in _ITEM_ATTRS_MAIN_FIELDS:
-		if k not in item_attrs:
-			continue
-		val = item_attrs[k]
-		if val is not None and (not isinstance(val, str) or val.strip() != ""):
-			item_doc.set(k, val)
-
-	# 子表：清空后按数组顺序 append（子表行字段可为 null，Frappe 会正常处理）
-	for child_field in _ITEM_ATTRS_CHILD_TABLES:
-		if child_field not in item_attrs:
-			continue
-		rows = item_attrs[child_field]
-		if not isinstance(rows, (list, tuple)):
-			continue
-		item_doc.set(child_field, [])
-		for row in rows:
-			if isinstance(row, dict):
-				item_doc.append(child_field, row)
-
-
-def _resolve_warehouse_name(warehouse_input, company):
-	"""
-	解析仓库名称。ERPNext 仓库 name 通常带公司后缀（如 半成品 - B），
-	前端可能传「半成品仓库」「半成品」等。优先精确匹配，否则按 name 或 warehouse_name 匹配。
-	返回实际 Warehouse name 或 None。
-	"""
-	if not warehouse_input or not isinstance(warehouse_input, str) or not warehouse_input.strip():
-		return None
-	wh = warehouse_input.strip()
-	candidates = [wh]
-	# 带公司后缀的 name
-	abbr = frappe.get_cached_value("Company", company, "abbr") or ""
-	if abbr:
-		candidates.append("{0} - {1}".format(wh, abbr))
-	# 「半成品仓库」→「半成品」常见简写回退
-	if wh.endswith("仓库") and len(wh) > 2:
-		candidates.append(wh[:-2])
-		if abbr:
-			candidates.append("{0} - {1}".format(wh[:-2], abbr))
-	for c in candidates:
-		if frappe.db.exists("Warehouse", c):
-			return c
-	# 按 warehouse_name 匹配该公司下叶子仓库
-	found = frappe.db.get_value(
-		"Warehouse",
-		{"warehouse_name": wh, "company": company, "is_group": 0},
-		"name",
-	)
-	if found:
-		return found
-	if wh.endswith("仓库") and len(wh) > 2:
-		found = frappe.db.get_value(
-			"Warehouse",
-			{"warehouse_name": wh[:-2], "company": company, "is_group": 0},
-			"name",
-		)
-	return found
-
-
-def _apply_item_warehouse(item_doc, warehouse, company):
-	"""
-	将仓库写入 Item 的 item_defaults 子表（按公司设置 default_warehouse）。
-	不执行 save，由调用方负责。
-	"""
-	if not warehouse or not isinstance(warehouse, str) or not warehouse.strip():
-		return
-	wh = _resolve_warehouse_name(warehouse, company)
-	if not wh:
-		return
-	# 查找是否已有该公司记录，有则更新，无则追加
-	defaults = item_doc.get("item_defaults") or []
-	found = False
-	for d in defaults:
-		if d.get("company") == company:
-			d.default_warehouse = wh
-			found = True
-			break
-	if not found:
-		item_doc.append("item_defaults", {"company": company, "default_warehouse": wh})
 
 
 def _create_item_from_node(node):
@@ -285,10 +180,10 @@ def _ensure_or_validate_item(node):
 		try:
 			item_doc = frappe.get_doc("Item", res_code)
 			if item_attrs and isinstance(item_attrs, dict):
-				_apply_item_attrs(item_doc, item_attrs)
+				apply_item_attrs(item_doc, item_attrs)
 			if warehouse:
 				company = _get_default_company()
-				_apply_item_warehouse(item_doc, warehouse, company)
+				apply_item_warehouse(item_doc, warehouse, company)
 			item_doc.save(ignore_permissions=True)
 		except Exception as e:
 			return {
@@ -351,7 +246,7 @@ def _build_bom_data_for_node(node, node_map, company):
 	children = node.get("children") or []
 	# 父节点 warehouse 作为子件缺省 source_warehouse（子节点未指定时使用）
 	parent_wh = (node.get("warehouse") or (node.get("item_attrs") or {}).get("warehouse") or "").strip()
-	parent_source_wh = _resolve_warehouse_name(parent_wh, company) if parent_wh else ""
+	parent_source_wh = resolve_warehouse_name(parent_wh, company) if parent_wh else ""
 	bom_items = []
 	for child in children:
 		child_id = child.get("id") or ""
@@ -363,7 +258,7 @@ def _build_bom_data_for_node(node, node_map, company):
 		uom = frappe.get_cached_value("Item", child_item_code, "stock_uom") or "Nos"
 		# 子节点 warehouse 优先，否则用父节点 warehouse，写入 BOM Item 的 source_warehouse
 		wh_input = (child.get("warehouse") or (child.get("item_attrs") or {}).get("warehouse") or "").strip()
-		source_warehouse = (_resolve_warehouse_name(wh_input, company) if wh_input else None) or parent_source_wh
+		source_warehouse = (resolve_warehouse_name(wh_input, company) if wh_input else None) or parent_source_wh
 		row = {"item_code": child_item_code, "qty": qty, "uom": uom}
 		if source_warehouse:
 			row["source_warehouse"] = source_warehouse
@@ -442,7 +337,7 @@ def _build_target_bom_items_from_tree(tree, company):
 			continue
 
 		warehouse = (child.get("warehouse") or (child.get("item_attrs") or {}).get("warehouse") or "").strip()
-		source_warehouse = _resolve_warehouse_name(warehouse, company) if warehouse else None
+		source_warehouse = resolve_warehouse_name(warehouse, company) if warehouse else None
 		if warehouse and not source_warehouse:
 			failed_items.append({
 				"node_id": node_id,
