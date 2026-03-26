@@ -236,7 +236,8 @@ def _create_item_from_node(node):
 		if ("1062" in err_str or "duplicate entry" in err_str) and frappe.db.exists("Item", item_code):
 			return item_code
 		raise
-	return item_code
+	# Stock Settings 为 Naming Series 时，insert 后实际 name/item_code 由系列生成，必须使用 doc.name
+	return doc.name
 
 
 def _ensure_or_validate_item(node):
