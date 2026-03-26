@@ -3,8 +3,9 @@
 """
 标准 ERPNext/Frappe BOM 删除（白名单）。
 
-与列表页「Delete」一致：对每条记录调用 frappe.delete_doc('BOM', name)，
-从而走完整校验（删除权限、已提交单据不可删、链接检查、on_trash / after_delete、
+对已提交（docstatus == 1）的 BOM 会先执行与界面一致的 Cancel，再 delete_doc；
+草稿直接删除；已取消（docstatus == 2）跳过 Cancel、仅删除。
+从而走完整校验（权限、链接检查、on_cancel / on_trash / after_delete、
 Deleted Document、附件清理等）。
 
 调用示例:
@@ -86,9 +87,22 @@ def _normalize_bom_names(jd):
 
 def _delete_one_bom(name):
     """
-    删除单张 BOM，与 frappe.desk.reportview.delete_bulk 中单条逻辑一致：
-    frappe.delete_doc + commit；失败则 rollback。
+    删除单张 BOM：已提交则先 cancel 再 delete_doc（与 ERPNext 单据生命周期一致），
+    最后 commit；调用方在异常时 rollback。
     """
+    if not frappe.db.exists(_DOCTYPE, name):
+        frappe.throw(_("找不到 BOM：{0}").format(name), frappe.DoesNotExistError)
+
+    doc = frappe.get_doc(_DOCTYPE, name)
+    if doc.docstatus == 1:
+        doc.cancel()
+    elif doc.docstatus == 2:
+        pass
+    elif doc.docstatus != 0:
+        frappe.throw(
+            _("BOM {0} 状态异常（docstatus={1}），无法删除").format(name, doc.docstatus)
+        )
+
     frappe.delete_doc(_DOCTYPE, name, ignore_missing=False)
     frappe.db.commit()
 

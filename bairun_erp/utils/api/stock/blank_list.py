@@ -2,6 +2,7 @@
 # 毛坯/半成品列表接口：待委外列表、已委外列表。
 # 毛坯：到库=入毛坯仓 SE+PR；委外=毛坯仓→半成品仓。
 # 半成品：到库=入半成品仓（即毛坯委外入半成品）；委外=半成品仓→成品仓。
+# 调拨单（Stock Entry）列表汇总含草稿(docstatus=0)与已提交(1)，不含已取消(2)。
 # 接口路径：bairun_erp.utils.api.stock.blank_list
 
 from __future__ import unicode_literals
@@ -17,6 +18,9 @@ FINISHED_WAREHOUSE = "成品 - B"
 
 LIST_TYPE_BLANK = "blank"
 LIST_TYPE_SEMI_FINISHED = "semi_finished"
+
+# Stock Entry：草稿与已提交均参与到库/委外汇总（排除已取消）
+_STE_DOCSTATUS_FOR_LIST_SQL = "se.docstatus IN (0, 1)"
 
 # 白名单 order_by 允许的列名，防止 SQL 注入
 _ORDER_COLUMNS = frozenset({
@@ -123,10 +127,10 @@ def _get_received_by_key(list_type=LIST_TYPE_BLANK):
 		sql = """
 			SELECT {}
 			FROM `tabStock Entry Detail` sed
-			INNER JOIN `tabStock Entry` se ON se.name = sed.parent AND se.docstatus = 1
+			INNER JOIN `tabStock Entry` se ON se.name = sed.parent AND {}
 			WHERE se.purpose = 'Material Transfer'
 			  AND sed.s_warehouse = %s AND sed.t_warehouse = %s
-		""".format(", ".join(select))
+		""".format(", ".join(select), _STE_DOCSTATUS_FOR_LIST_SQL)
 		rows = frappe.db.sql(sql, (BLANK_WAREHOUSE, SEMI_FINISHED_WAREHOUSE), as_dict=True)
 		agg = {}
 		for r in rows:
@@ -158,9 +162,9 @@ def _get_received_by_key(list_type=LIST_TYPE_BLANK):
 		       se.posting_date,
 		       {}
 		FROM `tabStock Entry Detail` sed
-		INNER JOIN `tabStock Entry` se ON se.name = sed.parent AND se.docstatus = 1
+		INNER JOIN `tabStock Entry` se ON se.name = sed.parent AND {}
 		WHERE sed.t_warehouse = %s
-	""".format(warehouse_slot_expr)
+	""".format(warehouse_slot_expr, _STE_DOCSTATUS_FOR_LIST_SQL)
 	rows = frappe.db.sql(sql, (BLANK_WAREHOUSE,), as_dict=True)
 	agg = {}
 	for r in rows:
@@ -226,10 +230,10 @@ def _get_outsourced_by_key(list_type=LIST_TYPE_BLANK):
 	sql = """
 		SELECT {}
 		FROM `tabStock Entry Detail` sed
-		INNER JOIN `tabStock Entry` se ON se.name = sed.parent AND se.docstatus = 1
+		INNER JOIN `tabStock Entry` se ON se.name = sed.parent AND {}
 		WHERE se.purpose = 'Material Transfer'
 		  AND sed.s_warehouse = %s AND sed.t_warehouse = %s
-	""".format(", ".join(select))
+	""".format(", ".join(select), _STE_DOCSTATUS_FOR_LIST_SQL)
 	rows = frappe.db.sql(sql, (s_wh, t_wh), as_dict=True)
 
 	agg = {}
@@ -384,7 +388,7 @@ def _build_row(key, received_data, outsourced_data, order_qty_map, order_qty_by_
 def get_pending_outsourcing_list(**kwargs):
 	"""
 	待委外列表（毛坯/半成品）：行粒度 销售订单号+物料+仓库，仅返回 到库数>0 且 委外余数>0 的行。
-	委外数/委外明细仅来自已提交的调拨单（未提交的不落库）。
+	到库/委外数量含调拨单草稿与已提交（不含已取消）。
 	POST json_data: limit_start, limit_page_length, order_by, search_project_no, search_outsourcing_supplier, list_type
 	  - list_type: "blank"（默认）毛坯；"semi_finished" 半成品。
 	返回: message = [ 行对象 ], total_count
