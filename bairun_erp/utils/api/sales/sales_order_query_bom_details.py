@@ -1019,6 +1019,11 @@ def get_product_bom_list(sales_order_name=None, item_code=None):
         unit_estimated_cost = round(total_cost / total_qty, 4) if total_qty else None
 
         header = _build_header(so_doc, so_items)
+        header["status"] = _resolve_br_so_bom_header_status(
+            sales_order_name,
+            finished_codes,
+            header.get("status"),
+        )
         header["unitEstimatedCost"] = unit_estimated_cost
 
         sales_price = flt(header.get("salesPrice") or 0)
@@ -1142,6 +1147,27 @@ def _detail_row_to_product_bom_api_row(row, row_no, ig_parent_cache):
     }
 
 
+
+
+def _resolve_br_so_bom_header_status(order_no, finished_item_codes, fallback_status):
+    """优先使用 BR SO BOM List 主表 status（单成品时最准确）；多成品若状态不一致则回退原值。"""
+    order_no = (order_no or "").strip()
+    statuses = []
+    for ic in finished_item_codes or []:
+        ic = (ic or "").strip()
+        if not ic:
+            continue
+        name = _br_so_bom_list_doc_name(order_no, ic)
+        st = frappe.db.get_value("BR SO BOM List", name, "status")
+        st = (st or "").strip()
+        if st:
+            statuses.append(st)
+    if not statuses:
+        return fallback_status
+    if len(set(statuses)) == 1:
+        return statuses[0]
+    return fallback_status
+
 def _load_flat_product_bom_rows_from_br_so_bom_list(order_no, finished_item_codes):
     """
     按销售订单行顺序依次读取 BR SO BOM List，拼接子表行（已按 row_no 排序）。
@@ -1255,6 +1281,11 @@ def get_product_bom_list_new(sales_order_name=None, item_code=None):
         unit_estimated_cost = round(total_cost / total_qty, 4) if total_qty else None
 
         header = _build_header(so_doc, so_items)
+        header["status"] = _resolve_br_so_bom_header_status(
+            sales_order_name,
+            finished_codes,
+            header.get("status"),
+        )
         header["unitEstimatedCost"] = unit_estimated_cost
 
         sales_price = flt(header.get("salesPrice") or 0)

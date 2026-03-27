@@ -284,11 +284,12 @@ def _merge_purchase_order_no_field(existing, new_po):
 
 
 def _update_br_so_bom_detail_po_fields(detail_row_name, po_name):
-	"""回写 BR SO BOM List Details：采购单号 + 生单状态。"""
+	"""回写 BR SO BOM List Details：采购单号 + 生单状态。返回子表 parent（BR SO BOM List 主表 name），未写入则 None。"""
 	if not detail_row_name or not po_name:
-		return
+		return None
 	if not frappe.db.exists("BR SO BOM List Details", detail_row_name):
-		return
+		return None
+	parent = frappe.db.get_value("BR SO BOM List Details", detail_row_name, "parent")
 	existing = frappe.db.get_value("BR SO BOM List Details", detail_row_name, "purchase_order_no")
 	merged = _merge_purchase_order_no_field(existing, po_name)
 	frappe.db.set_value(
@@ -300,6 +301,42 @@ def _update_br_so_bom_detail_po_fields(detail_row_name, po_name):
 		},
 		update_modified=True,
 	)
+	return parent
+
+
+def _br_so_bom_list_all_details_have_purchase_order(parent_name):
+	"""主表下每条明细均有非空 purchase_order_no（一键生单回写后）。"""
+	if not parent_name or not frappe.db.exists("BR SO BOM List", parent_name):
+		return False
+	n = frappe.db.count("BR SO BOM List Details", filters={"parent": parent_name})
+	if n == 0:
+		return False
+	for row in frappe.db.sql(
+		"""select purchase_order_no from `tabBR SO BOM List Details` where parent=%s""",
+		(parent_name,),
+		as_dict=True,
+	):
+		if not (row.get("purchase_order_no") or "").strip():
+			return False
+	return True
+
+
+def _apply_br_so_bom_main_po_raised_status(parent_names):
+	"""一键生单命中主表后直接置主表 status=po_raised（见 bom_item_list.SO_BOM_LIST_STATUS_PO_RAISED）。"""
+	if not parent_names:
+		return
+	from bairun_erp.utils.api.material.bom_item_list import SO_BOM_LIST_STATUS_PO_RAISED
+
+	for parent in parent_names:
+		if not parent:
+			continue
+		frappe.db.set_value(
+			"BR SO BOM List",
+			parent,
+			"status",
+			SO_BOM_LIST_STATUS_PO_RAISED,
+			update_modified=True,
+		)
 
 
 def _resolved_finished_item_code_for_bom_list(order_data, po_item):
@@ -366,9 +403,18 @@ def _sync_br_so_bom_list_details_from_saved_po(doc, order_data):
 	2) sales_order + 成品编码 + item_code + supplier_code（与明细行供应商一致）
 	3) 同上 + bom_code / bomCode（行上可选，用于重复物料行）
 	4) 仅 item_code 唯一则更新；否则更新 idx 最小的一行（保守）
+
+	返回：本次曾回写子表的 BR SO BOM List 主表 name 集合（用于判断主表 status 是否可置为 po_raised）。
 	"""
+	touched_parents = set()
 	if not doc or not getattr(doc, "name", None):
-		return
+		return touched_parents
+
+	def _touch_detail(detail_row_name):
+		p = _update_br_so_bom_detail_po_fields(detail_row_name, doc.name)
+		if p:
+			touched_parents.add(p)
+
 	order_data = order_data if isinstance(order_data, dict) else {}
 	items_od = order_data.get("items") or []
 	po_items = list(doc.items or [])
@@ -381,7 +427,7 @@ def _sync_br_so_bom_list_details_from_saved_po(doc, order_data):
 			or (row_meta.get("bomListDetailName") or "").strip()
 		)
 		if detail_name:
-			_update_br_so_bom_detail_po_fields(detail_name, doc.name)
+			_touch_detail(detail_name)
 			continue
 		so_name = (getattr(po_item, "sales_order", None) or "").strip()
 		if not so_name:
@@ -413,7 +459,7 @@ def _sync_br_so_bom_list_details_from_saved_po(doc, order_data):
 					order_by="idx asc",
 				)
 				if len(by_supp) == 1:
-					_update_br_so_bom_detail_po_fields(by_supp[0], doc.name)
+					_touch_detail(by_supp[0])
 					hit = True
 					break
 				if len(by_supp) > 1 and bom_code_hint:
@@ -424,15 +470,15 @@ def _sync_br_so_bom_list_details_from_saved_po(doc, order_data):
 						order_by="idx asc",
 					)
 					for nm in by_bom:
-						_update_br_so_bom_detail_po_fields(nm, doc.name)
+						_touch_detail(nm)
 					if by_bom:
 						hit = True
 						break
-					_update_br_so_bom_detail_po_fields(by_supp[0], doc.name)
+					_touch_detail(by_supp[0])
 					hit = True
 					break
 				if len(by_supp) > 1:
-					_update_br_so_bom_detail_po_fields(by_supp[0], doc.name)
+					_touch_detail(by_supp[0])
 					hit = True
 					break
 			# 无供应商命中或未传 supplier：bom_code 提示
@@ -444,11 +490,11 @@ def _sync_br_so_bom_list_details_from_saved_po(doc, order_data):
 					order_by="idx asc",
 				)
 				if len(by_bom) == 1:
-					_update_br_so_bom_detail_po_fields(by_bom[0], doc.name)
+					_touch_detail(by_bom[0])
 					hit = True
 					break
 				if len(by_bom) > 1:
-					_update_br_so_bom_detail_po_fields(by_bom[0], doc.name)
+					_touch_detail(by_bom[0])
 					hit = True
 					break
 			if hit:
@@ -460,11 +506,12 @@ def _sync_br_so_bom_list_details_from_saved_po(doc, order_data):
 				order_by="idx asc",
 			)
 			if len(candidates) == 1:
-				_update_br_so_bom_detail_po_fields(candidates[0], doc.name)
+				_touch_detail(candidates[0])
 				break
 			elif len(candidates) > 1:
-				_update_br_so_bom_detail_po_fields(candidates[0], doc.name)
+				_touch_detail(candidates[0])
 				break
+	return touched_parents
 
 
 def _after_save_po(doc, order_data):
@@ -481,7 +528,8 @@ def _after_save_po(doc, order_data):
 			doc.name,
 			update_modified=False,
 		)
-	_sync_br_so_bom_list_details_from_saved_po(doc, order_data or {})
+	touched = _sync_br_so_bom_list_details_from_saved_po(doc, order_data or {})
+	_apply_br_so_bom_main_po_raised_status(touched)
 
 
 def _do_insert_save_po(order_data):
@@ -556,6 +604,7 @@ def _extract_line_item_code(order_data):
 def save_purchase_order(order_data=None, *args, **kwargs):
 	"""
 	创建或更新采购订单（Purchase Order），保存后自动提交为已审核状态。
+	回写 BR SO BOM List Details 后，若命中该 BOM 主表并完成生单回写，则主表 `status` 置为 `po_raised`（见 `SO_BOM_LIST_STATUS_PO_RAISED`）。
 
 	入参:
 		order_data: 采购订单数据 dict，或通过 json_data 传入。
@@ -611,6 +660,9 @@ def save_purchase_order(order_data=None, *args, **kwargs):
 def save_purchase_orders(order_data_list=None, *args, **kwargs):
 	"""
 	批量创建或更新采购订单，保存后自动提交为已审核状态；保证事务完整性：要么全部成功，要么全部回滚。
+
+	一键生单成功并回写 BR SO BOM List Details 后：若某张 BOM 主表命中明细回写（本次有明细成功写入采购单号），
+	则将该主表 `status` 置为 **`po_raised`**（模块常量 `SO_BOM_LIST_STATUS_PO_RAISED`，见 `bom_item_list.py`）。
 
 	入参:
 		order_data_list: 采购订单数据列表，每项与 save_purchase_order 的 order_data 结构相同。

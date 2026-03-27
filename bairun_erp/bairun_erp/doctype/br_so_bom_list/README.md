@@ -22,7 +22,7 @@ BOM 物料清单报表**列表页**（多行分页、按交货日期等筛选）
 
 **明细页（与实时 BOM 展开同结构）**：若要以主从表为数据源、返回与 `get_product_bom_list` 相同的 `header` / `items` / `cartonItems` / `packagingItems`，请调用白名单方法 **`get_product_bom_list_new`**（`bairun_erp.utils.api.sales.sales_order_query_bom_details.get_product_bom_list_new`）。需已存在由销售订单保存同步生成的 BR SO BOM List 记录。
 
-**审核保存（主表更新 + 明细 Upsert）**：请调用白名单方法 **`audit_so_bom_list`**（`bairun_erp.utils.api.material.bom_item_list.audit_so_bom_list`）。对接文档：`docs/BOM物料清单审核-后端白名单接口说明.md`。
+**仅保存（主表更新 + 明细 Upsert，`status` 默认 `saved`）**：**`save_so_bom_list`**。**审核保存**：**`audit_so_bom_list`**。**仅更新主表 `status`**：**`update_so_bom_list_status`**。路径均在 `bairun_erp.utils.api.material.bom_item_list`。对接文档：`docs/BOM物料清单审核-后端白名单接口说明.md`。
 
 ---
 
@@ -31,7 +31,7 @@ BOM 物料清单报表**列表页**（多行分页、按交货日期等筛选）
 | 字段名 | 类型 | 说明 |
 |--------|------|------|
 | `order_no` | Data | 销售订单号，如 WZ0002603001 |
-| `status` | Data | 审核状态：未审核 / 已审核（或 draft / approved） |
+| `status` | Data | 业务状态：`saved` / `approved` / **`po_raised`**（已生单，明细全部已关联采购单号）等，详见对接文档 §0.1 |
 | `customer_code` | Data | 单位编号（客户编号），如 175、060、062 |
 | `customer_name` | Data | 单位全名（客户全名） |
 | `item_code` | Data | 存货编码（成品），如 0305061、0101403 |
