@@ -783,8 +783,8 @@ def list_bom_material_report(**kwargs):
     数据源：**BR SO BOM List**（一行 = 销售订单号 + 成品物料），与同步写入的主表一致。
     不展开子表 BR SO BOM List Details；明细页可用 get_product_bom_list（实时 BOM）或 get_product_bom_list_new（已同步主从表）。
 
-    日期口径：**delivery_date（交货日期）** 闭区间 [date_from, date_to]。
-    无交货日期的主表记录不会命中日期筛选。
+    日期口径：**creation（创建时间）** 按日期闭区间 [date_from, date_to]。
+    即：creation >= date_from 00:00:00 且 creation <= date_to 23:59:59。
 
     请求参数（可直接作为表单字段，或放在 json_data 内）:
         date_from (str): 必填，YYYY-MM-DD
@@ -836,9 +836,12 @@ def list_bom_material_report(**kwargs):
     item_code = (jd.get("item_code") or "").strip()
     order_by = _sanitize_bom_report_order_by(jd.get("order_by"))
 
+    date_from_dt = "{} 00:00:00".format(df.strftime("%Y-%m-%d"))
+    date_to_dt = "{} 23:59:59".format(dt.strftime("%Y-%m-%d"))
+
     filters = [
-        ["delivery_date", ">=", df],
-        ["delivery_date", "<=", dt],
+        ["creation", ">=", date_from_dt],
+        ["creation", "<=", date_to_dt],
     ]
 
     if sales_order_name:
@@ -1017,6 +1020,8 @@ def get_product_bom_list(sales_order_name=None, item_code=None):
         total_cost = sum(flt(r.get("orderCost") or 0) for r in items)
         total_qty = sum(flt(si.get("qty") or si.get("stock_qty") or 0) for si in so_items)
         unit_estimated_cost = round(total_cost / total_qty, 4) if total_qty else None
+
+        finished_codes = [(getattr(si, "item_code", None) or "").strip() for si in so_items]
 
         header = _build_header(so_doc, so_items)
         header["status"] = _resolve_br_so_bom_header_status(

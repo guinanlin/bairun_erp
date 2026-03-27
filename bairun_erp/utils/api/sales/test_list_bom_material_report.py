@@ -8,7 +8,9 @@ from __future__ import unicode_literals
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
+from unittest.mock import patch
 
+import bairun_erp.utils.api.sales.sales_order_query_bom_details as bom_api
 from bairun_erp.utils.api.sales.sales_order_query_bom_details import (
     list_bom_material_report,
     _display_bom_status,
@@ -152,3 +154,28 @@ class TestListBomMaterialReport(FrappeTestCase):
             _sanitize_bom_report_order_by("bad_column desc"),
             "creation desc, name desc",
         )
+
+    def test_creation_date_filters_day_bounds(self):
+        """日期区间应按 creation 的当天闭区间过滤。"""
+        call_filters = []
+
+        def _fake_get_list(*args, **kwargs):
+            call_filters.append(kwargs.get("filters") or [])
+            return []
+
+        with patch.object(bom_api.frappe, "has_permission", return_value=True), patch.object(
+            bom_api.frappe, "get_list", side_effect=_fake_get_list
+        ):
+            r = list_bom_material_report(
+                json_data={
+                    "date_from": "2026-03-01",
+                    "date_to": "2026-03-31",
+                    "page_number": 1,
+                    "page_size": 20,
+                }
+            )
+
+        self.assertTrue(r.get("success"), msg=r.get("message"))
+        self.assertTrue(call_filters)
+        self.assertEqual(call_filters[0][0], ["creation", ">=", "2026-03-01 00:00:00"])
+        self.assertEqual(call_filters[0][1], ["creation", "<=", "2026-03-31 23:59:59"])
