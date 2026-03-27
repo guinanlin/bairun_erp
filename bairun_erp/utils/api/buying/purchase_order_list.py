@@ -270,6 +270,8 @@ def _enrich_unfulfilled_rows_qc_pr(rows):
 	"""
 	为未交行批量补充 can_create_pr、pending_qc、latest_quality_inspection，避免前端 N+1。
 
+	can_create_pr：按 ERP 采购订单行「可再收数量」(qty - po_received_qty) 判断；PR 已收满但尚未最终入库时
+	业务上仍可能出现在未交列表，但不应再引导创建新 PR。
 	pending_qc：已提交 PR、且该行尚无已提交质检单时，返回最早一条待检 PR 行（多 PR 时只取一个）。
 	latest_quality_inspection：与该 PO 行关联的已提交质检单中，按创建时间最新的一条单号。
 	"""
@@ -279,7 +281,9 @@ def _enrich_unfulfilled_rows_qc_pr(rows):
 	po_names = list({r.get("purchase_order") for r in rows if r.get("purchase_order")})
 	if not po_names:
 		for r in rows:
-			r["can_create_pr"] = _flt(r.get("outstanding_qty")) > 0
+			qty = _flt(r.get("qty"))
+			po_recv = _flt(r.get("po_received_qty"))
+			r["can_create_pr"] = (qty - po_recv) > 0
 			r["pending_qc"] = None
 			r["latest_quality_inspection"] = None
 		return
@@ -377,8 +381,9 @@ def _enrich_unfulfilled_rows_qc_pr(rows):
 		return best.get("qi_name") if best else None
 
 	for r in rows:
-		outstanding = _flt(r.get("outstanding_qty"))
-		r["can_create_pr"] = outstanding > 0
+		qty = _flt(r.get("qty"))
+		po_recv = _flt(r.get("po_received_qty"))
+		r["can_create_pr"] = (qty - po_recv) > 0
 
 		po = r.get("purchase_order")
 		po_item_name = r.get("po_item_name")
@@ -412,10 +417,15 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 	  search_customer_order, search_supplier, search_item_name
 	返回: { "message": [ 未交行对象, ... ], "total_count": 总条数 }
 
+	未交口径（业务）：以「最终入库」为准——已提交且 purpose=Material Receipt 的 Stock Entry 明细数量
+	（经 PR 行 purchase_order_item 关联到本 PO 行汇总），不满订单数量则仍为未交。
+	PO/PR 的 received_qty 仅表示 ERP 收货回写，PR 收讫但未做质检入库时仍计为未交。
+
 	未交行对象除原有字段外包含：
 	- po_item_name: Purchase Order Item 的 name（用于与 PR 行、质检关联）
-	- can_create_pr: 是否允许从采购未交打开采购接收指向该行（默认可收量 > 0）
-	- pending_qc: 若有已提交 PR 行尚缺已提交质检，则为 { purchase_receipt, pr_item_name }，否则 null（多笔待检时取最早一张 PR）
+	- po_received_qty: PO 行上 ERP 已收货数量（received_qty），用于与「最终入库」区分
+	- can_create_pr: 是否仍可按 ERP 再行收货（qty > po_received_qty）；PR 已满仅待质检/入库时为 false
+	- pending_qc: 若有已提交 PR 行尚缺已提交质检单，则为 { purchase_receipt, pr_item_name }，否则 null（多笔待检时取最早一张 PR）
 	- latest_quality_inspection: 与该 PO 行关联的已提交质检单号（最新一条），无则 null
 	"""
 	params = _parse_params(kwargs)
@@ -446,7 +456,8 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 		"item.item_code as item_code",
 		"item.item_name as item_name",
 		"item.qty as qty",
-		"IFNULL(item.received_qty, 0) as received_qty",
+		"IFNULL(item.received_qty, 0) as po_line_received_qty",
+		"COALESCE(stocked_matched.sum_stocked, 0) AS stocked_qty",
 		"item.rate as rate",
 		"item.amount as amount",
 		"item.warehouse as warehouse",
@@ -462,7 +473,7 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 
 	conditions = [
 		"po.status NOT IN ('Cancelled', 'Closed')",
-		"(item.qty - IFNULL(item.received_qty, 0)) > 0",
+		"(item.qty - COALESCE(stocked_matched.sum_stocked, 0)) > 0",
 	]
 	values = []
 
@@ -489,14 +500,36 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 	if "creation" in order_sql.lower():
 		order_sql = order_sql.replace("creation", "po.creation").replace("CREATION", "po.creation")
 
+	# 最终入库量：已提交入库单（Material Receipt）明细 qty，按 PR 子表 purchase_order_item 归属到 PO 行
+	_stock_join_sql = """
+		LEFT JOIN (
+			SELECT pri.purchase_order_item AS poi_key, SUM(sed.qty) AS sum_stocked
+			FROM `tabStock Entry Detail` sed
+			INNER JOIN `tabStock Entry` se ON se.name = sed.parent
+				AND se.docstatus = 1
+				AND se.purpose = 'Material Receipt'
+			INNER JOIN `tabPurchase Receipt Item` pri ON pri.parent = sed.reference_purchase_receipt
+			WHERE IFNULL(pri.purchase_order_item, '') != ''
+			GROUP BY pri.purchase_order_item
+		) stocked_matched ON stocked_matched.poi_key = item.name
+	"""
+
 	base_sql = """
 		SELECT {}
 		FROM `tabPurchase Order` po
 		INNER JOIN `tabPurchase Order Item` item ON item.parent = po.name
+		{}
 		WHERE {}
-	""".format(", ".join(select_parts), where_sql)
+	""".format(", ".join(select_parts), _stock_join_sql, where_sql)
 
-	count_sql = "SELECT COUNT(*) AS cnt FROM (`tabPurchase Order` po INNER JOIN `tabPurchase Order Item` item ON item.parent = po.name) WHERE " + where_sql
+	_stock_join_for_count = " ".join(_stock_join_sql.split())
+	count_sql = (
+		"SELECT COUNT(*) AS cnt FROM (`tabPurchase Order` po "
+		"INNER JOIN `tabPurchase Order Item` item ON item.parent = po.name "
+		+ _stock_join_for_count
+		+ ") WHERE "
+		+ where_sql
+	)
 	total_count = 0
 	try:
 		res = frappe.db.sql(count_sql, values, as_dict=True)
@@ -516,8 +549,9 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 	out = []
 	for r in rows:
 		qty = _flt(r.get("qty"))
-		received_qty = _flt(r.get("received_qty"))
-		outstanding_qty = qty - received_qty
+		po_line_received = _flt(r.get("po_line_received_qty"))
+		stocked_qty = _flt(r.get("stocked_qty"))
+		outstanding_qty = qty - stocked_qty
 		if outstanding_qty <= 0:
 			continue
 		rate = _flt(r.get("rate"))
@@ -532,7 +566,8 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 			"item_code": r.get("item_code"),
 			"item_name": r.get("item_name"),
 			"qty": qty,
-			"received_qty": received_qty,
+			"po_received_qty": po_line_received,
+			"received_qty": stocked_qty,
 			"outstanding_qty": outstanding_qty,
 			"rate": rate,
 			"amount": _flt(r.get("amount")),

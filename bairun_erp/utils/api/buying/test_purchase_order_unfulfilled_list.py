@@ -80,12 +80,13 @@ class TestPurchaseOrderUnfulfilledList(FrappeTestCase):
 		row = msg[0]
 		required = [
 			"purchase_order", "supplier", "supplier_name", "transaction_date",
-			"schedule_date", "item_code", "item_name", "qty", "received_qty",
-			"outstanding_qty", "rate", "amount", "outstanding_amount", "rowKey",
+			"schedule_date", "item_code", "item_name", "qty", "po_received_qty",
+			"received_qty", "outstanding_qty", "rate", "amount", "outstanding_amount", "rowKey",
 		]
 		for key in required:
 			self.assertIn(key, row, "未交行应包含字段: {}".format(key))
 		self.assertGreater(row["outstanding_qty"], 0)
+		# received_qty：最终入库量；未交 = 订单数量 - 最终入库
 		self.assertEqual(row["outstanding_qty"], row["qty"] - row["received_qty"])
 		self.assertIn("-", row["rowKey"])
 
