@@ -168,6 +168,14 @@ def update_item_properties_by_item_code(item_code=None, **kwargs):
 			continue
 		payload_source[k] = v
 
+	# 与 BOM 画布节点一致：属性可放在嵌套 item_attrs；否则 _filter_allowed 会丢掉整段（含 br_packaging_details）
+	ia = payload_source.pop("item_attrs", None)
+	if isinstance(ia, dict):
+		combined = dict(ia)
+		for k, v in payload_source.items():
+			combined[k] = v
+		payload_source = combined
+
 	payload = _filter_allowed(payload_source)
 
 	if not _has_updatable_content(payload):

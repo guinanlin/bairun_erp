@@ -5,6 +5,7 @@ from __future__ import unicode_literals
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
+from frappe.utils import flt
 
 from bairun_erp.utils.api.material.item_properties_update import update_item_properties_by_item_code
 
@@ -84,4 +85,20 @@ class TestUpdateItemPropertiesByItemCode(FrappeTestCase):
 		item.reload()
 		self.assertEqual(item.item_name, new_name)
 		item.item_name = original
+		item.save()
+
+	def test_nested_item_attrs_merged_like_canvas_node(self):
+		"""画布常把属性放在 item_attrs；须与 create_bom Step1 一样能写入白名单字段。"""
+		if not frappe.db.exists("Item", TEST_ITEM_CODE):
+			self.skipTest(f"Item {TEST_ITEM_CODE} does not exist in DB")
+		item = frappe.get_doc("Item", TEST_ITEM_CODE)
+		orig_qty = item.get("br_packing_qty")
+		res = update_item_properties_by_item_code(
+			item_code=TEST_ITEM_CODE,
+			json_data={"item_attrs": {"br_packing_qty": 99}},
+		)
+		self.assertTrue(res.get("success"), msg=res)
+		item.reload()
+		self.assertEqual(flt(item.get("br_packing_qty")), 99.0)
+		item.br_packing_qty = orig_qty
 		item.save()
