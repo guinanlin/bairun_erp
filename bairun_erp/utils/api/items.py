@@ -405,6 +405,34 @@ def get_boms_by_item_group(item_group_name):
 
     return result
 
+def _strip_material_center_misapplied_has_variants_filter(filters):
+    """
+    物料中心列表前端在未勾选「包含变体」时曾错误追加 has_variants=1（仅模板物料），
+    导致普通物料与变体子项被排除、列表常为空。移除该条误用条件后，列表包含全部 Item；
+    仍可通过返回字段 has_variants、variant_of 区分模板 / 变体 / 普通物料。
+
+    仅去掉「has_variants 等于 1」这一种与业务文档对齐的误用；其它 has_variants 条件保留。
+    """
+    if not filters:
+        return filters or {}
+    if isinstance(filters, list):
+        out = []
+        for row in filters:
+            if isinstance(row, (list, tuple)) and len(row) >= 3:
+                field, op, val = row[0], row[1], row[2]
+                if field == "has_variants" and op == "=" and val in (1, True, "1"):
+                    continue
+            out.append(row)
+        return {} if len(out) == 0 else out
+    if isinstance(filters, dict):
+        d = dict(filters)
+        hv = d.get("has_variants")
+        if hv in (1, True, "1"):
+            d.pop("has_variants", None)
+        return d
+    return filters
+
+
 # file: rongguan_erp/utils/api/items.py
 # 示例用法:
 # bench --site site1.local execute rongguan_erp.utils.api.items.get_items_with_attributes_with_pagination --kwargs '{"filters": {"item_group": "成品"}, "page_number": 1, "page_size": 10}'
@@ -432,6 +460,9 @@ def get_items_with_attributes_with_pagination(filters=None, fields=None, page_nu
 
     if not filters:
         filters = {}
+
+    # 物料中心：去掉前端误传的「仅模板」has_variants=1，避免列表被默认挡空
+    filters = _strip_material_center_misapplied_has_variants_filter(filters)
 
     page_number = int(page_number)
     page_size = int(page_size)

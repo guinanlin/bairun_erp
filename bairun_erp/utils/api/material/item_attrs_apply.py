@@ -22,6 +22,8 @@ ITEM_ATTRS_MAIN_FIELDS = (
 	"br_has_mark",
 	"br_mark_document",
 	"br_mark_document_name",
+	# 作业指导书：存 URL（建议前端上传后传公开/可访问链接，勿传超大 Data URL）
+	"custom_work_instruction_url",
 )
 
 # 子表字段名（出现则整表覆盖）

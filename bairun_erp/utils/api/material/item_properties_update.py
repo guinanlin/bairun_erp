@@ -22,7 +22,7 @@ _EXTRA_ALLOWED = frozenset({"item_name", "warehouse"})
 
 ALLOWED_UPDATE_KEYS = _EXTRA_ALLOWED | set(ITEM_ATTRS_MAIN_FIELDS) | set(ITEM_ATTRS_CHILD_TABLES)
 
-_CHILD_PRICE_FIELDS = ("br_price_one", "br_price_two", "br_price_three")
+_CHILD_PRICE_FIELDS = ("br_price_one", "br_price_two", "br_price_three", "br_pallet_unit_price")
 
 
 def _parse_kwargs_json_data(kwargs):
@@ -133,8 +133,12 @@ def update_item_properties_by_item_code(item_code=None, **kwargs):
 	- 主表：br_packing_qty, br_turnover, br_carton_spec, br_volume,
 	  br_carton_length, br_carton_width, br_carton_height,
 	  br_supplier, br_price, br_quality_inspection, br_has_mark,
-	  br_mark_document, br_mark_document_name
+	  br_mark_document, br_mark_document_name,
+	  custom_work_instruction_url（作业指导书链接，建议 URL）
 	- 子表（传入则整表覆盖）：br_process_suppliers, br_packaging_details, br_pallet_selections
+	  - br_packaging_details 行：含 br_reusable（0/1 周转，与面板 reusable 对应）
+	  - br_pallet_selections 行：可含 br_pallet_unit_price, br_pallet_per_layer（单层箱数）,
+	    br_pallet_item_code, br_pallet_spec
 
 	参数:
 		item_code: 物料编码（也可放在 json_data 内）

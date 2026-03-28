@@ -8,7 +8,11 @@
   "br_pallet_model",
   "br_pallet_size",
   "br_palletizing_height",
-  "br_qty_per_pallet"
+  "br_qty_per_pallet",
+  "br_pallet_unit_price",
+  "br_pallet_per_layer",
+  "br_pallet_item_code",
+  "br_pallet_spec"
  ],
  "fields": [
   {
@@ -39,12 +43,37 @@
    "in_list_view": 1,
    "label": "\u6bcf\u6258\u6570\u91cf",
    "placeholder": "\u6bcf\u6258\u7bb1\u6570/\u4ef6\u6570"
+  },
+  {
+   "fieldname": "br_pallet_unit_price",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "\u6258\u76d8\u5355\u4ef7"
+  },
+  {
+   "fieldname": "br_pallet_per_layer",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "\u5355\u5c42\u7bb1\u6570",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "br_pallet_item_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "\u6258\u76d8\u7269\u6599\u7f16\u7801"
+  },
+  {
+   "fieldname": "br_pallet_spec",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "\u6258\u76d8\u89c4\u683c\u5c55\u793a"
   }
  ],
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-02-27 00:00:00.000000",
+ "modified": "2026-03-28 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Bairun Erp",
  "name": "BR Item Pallet Selection",
