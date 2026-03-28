@@ -100,7 +100,8 @@ def add_service_item(
 		item_group: 可选。物料组。不传默认「服务」或保留原值。
 		stock_uom: 可选。库存单位，默认 "Nos" 或保留原值。
 		suppliers: 可选。供应商列表，JSON 或 list，每项 {supplier, custom_price?, custom_isinvoice?, supplier_part_no?}。
-		           新增时不传则用系统中全部供应商；更新时不传则不修改供应商明细，传了则覆盖更新。
+		           新增时不传则用系统中全部供应商；传 [] 则零家供应商。
+		           更新时不传则不修改供应商明细；传了（含 []）则整表替换，前端任意增删改后提交当前全量列表即可。
 		description: 可选。描述；更新时未传则保留原值。
 
 	返回:
@@ -134,8 +135,8 @@ def add_service_item(
 		if description is not None:
 			doc.description = (description or "").strip() or ""
 
-		parsed = _parse_suppliers(suppliers)
-		if parsed:
+		# 传了 suppliers（含 JSON 空数组 []）即整表同步：增删改均由前端当前列表唯一决定
+		if suppliers is not None:
 			doc.supplier_items = []
 			_ensure_supplier_items(doc, suppliers)
 		doc.save(ignore_permissions=True)

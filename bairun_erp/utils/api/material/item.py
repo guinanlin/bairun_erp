@@ -262,12 +262,15 @@ def _validate_suppliers_exist(suppliers):
 
 
 def _ensure_supplier_items(doc, suppliers=None):
-	"""为 Item 写入供应商明细。suppliers 为 None 或空时，取系统中全部 Supplier 并写入（单价、是否开票默认 0）。"""
-	suppliers = _parse_suppliers(suppliers)
-	if not suppliers:
-		# 未传则取系统中全部供应商，单价 0、是否开票 0
+	"""为 Item 写入供应商明细。
+	suppliers 为 None：表示调用方未指定列表，取系统中全部 Supplier 并写入（单价、是否开票默认 0）。
+	suppliers 为显式传入的 list / JSON（含空列表 []）：仅按该列表写入，空列表表示零行、不展开为全部供应商。
+	"""
+	if suppliers is None:
 		names = frappe.get_all("Supplier", pluck="name", order_by="name")
 		suppliers = [{"supplier": n, "custom_price": 0, "custom_isinvoice": 0} for n in names]
+	else:
+		suppliers = _parse_suppliers(suppliers)
 	item_meta = frappe.get_meta("Item Supplier")
 	has_price = item_meta.get_field("custom_price") is not None
 	has_isinvoice = item_meta.get_field("custom_isinvoice") is not None
@@ -287,8 +290,8 @@ def _ensure_supplier_items(doc, suppliers=None):
 			val = row.get("custom_pricing_factor")
 			entry["custom_pricing_factor"] = float(val) if val is not None and val != "" else 1.0
 		doc.append("supplier_items", entry)
-	if doc.get("supplier_items"):
-		doc.save(ignore_permissions=True)
+	# 含「显式空列表」写入零行等情况，也需落库子表
+	doc.save(ignore_permissions=True)
 
 
 # 包材新建 Item 时写入的默认公司与默认仓库（显式设置 item_defaults，不再走物料组/全局默认继承）
