@@ -93,6 +93,60 @@ def _get_item_variant_attrs(item_codes):
     return out
 
 
+def _attach_process_supplier_rows(item_details_cache, item_codes):
+    """
+    将 Item 子表「工艺-供应商」行批量挂到 item_details_cache[code] 上，供 BOM 树节点解析 process。
+    业务工艺选项与 BR Item Process Supplier.br_process 一致；标准 BOM Item.operation 常为空白。
+    """
+    if not item_codes:
+        return
+    meta = frappe.get_meta("Item")
+    if not meta.get_field("br_process_suppliers"):
+        return
+    names = list({c for c in item_codes if c and isinstance(item_details_cache.get(c), dict)})
+    if not names:
+        return
+    rows = frappe.get_all(
+        "BR Item Process Supplier",
+        filters={"parent": ["in", names]},
+        fields=["parent", "br_process", "br_supplier_one", "idx"],
+        order_by="parent asc, idx asc",
+    )
+    by_parent = {}
+    for r in rows:
+        p = r.get("parent")
+        if not p:
+            continue
+        by_parent.setdefault(p, []).append(r)
+    for ic in names:
+        item_details_cache[ic]["process_supplier_rows"] = by_parent.get(ic, [])
+
+
+def _resolve_bom_item_process(operation, item_details):
+    """
+    工艺：优先 BOM Item.operation（与工序/路由相关）；否则用 Item 子表 br_process_suppliers。
+    若存在 default_supplier，优先匹配 br_supplier_one 相同的子表行。
+    """
+    op = (operation or "").strip() if operation else ""
+    if op:
+        return op
+    if not isinstance(item_details, dict):
+        return ""
+    supplier = (item_details.get("supplier") or "").strip()
+    rows = item_details.get("process_supplier_rows") or []
+    if supplier:
+        for r in rows:
+            if (r.get("br_supplier_one") or "").strip() == supplier:
+                proc = (r.get("br_process") or "").strip()
+                if proc:
+                    return proc
+    for r in rows:
+        proc = (r.get("br_process") or "").strip()
+        if proc:
+            return proc
+    return ""
+
+
 def _get_item_tree_fields(item_codes):
     """
     批量获取 Item 的 item_group、stock_uom、default_warehouse、default_supplier。
@@ -157,7 +211,7 @@ def _bom_item_to_tree_node(bi, bom_doc, item_details, parent_bom_qty=1):
     bom_qty = float(bi.stock_qty or bi.qty or 0) / float(parent_bom_qty or 1)
 
     warehouse = (getattr(bi, "source_warehouse", None) or "").strip() or details.get("warehouse", "")
-    process = (getattr(bi, "operation", None) or "").strip()
+    process = _resolve_bom_item_process(getattr(bi, "operation", None), details)
     desc = (getattr(bi, "description", None) or "").strip() or details.get("description", "")
 
     node = {
@@ -212,6 +266,7 @@ def _build_bom_tree(bom_name, item_details_cache=None):
         fetched = _get_item_tree_fields(missing)
         for k, v in fetched.items():
             item_details_cache[k] = v
+        _attach_process_supplier_rows(item_details_cache, list(fetched.keys()))
 
     details = item_details_cache.get(root_item_code, {})
     parent_qty = float(bom_doc.quantity or 1)
@@ -235,6 +290,9 @@ def _build_bom_tree(bom_name, item_details_cache=None):
         root["supplier"] = details["supplier"]
     if details.get("description"):
         root["description"] = details["description"]
+    root_process = _resolve_bom_item_process(None, details)
+    if root_process:
+        root["process"] = root_process
 
     for bi in bom_doc.items or []:
         if bi.bom_no:
