@@ -19,6 +19,31 @@
 
 未出现在请求里的字段 **不会** 被修改；子表 **`br_process_suppliers` / `br_packaging_details` / `br_pallet_selections` 若传入则整表替换**（先清空再按数组写入）。
 
+**嵌套 `item_attrs`**：与画布节点一致时，可把主表字段与子表放在 `item_attrs` 对象内；服务端会先合并 `item_attrs` 再按白名单过滤（顶层同名字段覆盖 `item_attrs` 内字段）。
+
+### 易混淆：哪些日志**不能**用来判断「更新物料是否写入 ERP」
+
+| 现象 | 说明 |
+|------|------|
+| `POST /scm/item/bom/canvas` 200 | 多为**前端 BFF / Next 路由**，不等于已调用 Frappe 的 `update_item_properties_by_item_code`。需在 Network 里再找 **发往 ERP 站点** 的请求。 |
+| 「服务端获取的 Item 数据」为 **Item 数组**（含 `item_code`、`item_name` 等整单字段） | 一般是 **Item 搜索/列表接口**的响应（例如选「型号」时的下拉数据），**不是**更新物料接口的请求体或返回值。 |
+| 画布本地 state 里有 `br_packaging_details[1]` | 只说明前端内存有数据；**未见到 ERP 方法请求**则无法证明已提交到 Frappe。 |
+
+### 排查「包材未落库」时，请抓取并粘贴（给后端分析）
+
+在浏览器 **Network** 中筛选 **实际 ERP 域名**（或同源代理到 Frappe 的路径），对**点击「更新当前物料」那一次**记录：
+
+1. **完整 URL**（须包含 `.../api/method/bairun_erp.utils.api.material.item_properties_update.update_item_properties_by_item_code`，或你们网关等价路径）。
+2. **Request Method**：`POST`。
+3. **Request Payload / Form Data**（原样复制，可脱敏 token）：  
+   - 若是 form：重点看 `json_data` 的**完整字符串**（展开后是否含 `br_packaging_details` 或 `item_attrs.br_packaging_details`）。  
+   - 若是 JSON body：贴完整 JSON。
+4. **Response JSON 全文**：`success`、`message`、`data`。
+5. **本次要更新的 `item_code`**（成品编码，如 `STO-ITEM-2026-00158`），与 BOM 画布上的 **BOM 名称**（如 `BOM-STO-ITEM-2026-00158-002`）**不是同一个概念**；落库子表挂在 **Item** 上，请确认请求里的 `item_code` 是成品物料编码。
+6. （可选）前端调用栈或封装函数名：例如是否在 `saveCanvas` 里**只**调了画布接口、**从未**调白名单更新接口。
+
+> **自检**：若 Network 里**根本没有**上述 `update_item_properties_by_item_code` 请求，则属于**前端/网关未转发**，后端 Python 再改也不会写入；需先接通该 API。
+
 ### 请求体示例（JSON 思路）
 
 ```json
