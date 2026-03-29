@@ -63,6 +63,7 @@ class TestBlankOutsourcingSubmit(FrappeTestCase):
 				"material_request_name": "MAT-MR-TEST-REPLAY",
 				"stock_entry_name": "MAT-STE-TEST-REPLAY",
 				"purchase_order_name": "PO-TEST-REPLAY",
+				"purchase_order_semi_finished_name": "PO-TEST-REPLAY-SEMI",
 			}
 		)
 		log.insert(ignore_permissions=True)
@@ -75,6 +76,7 @@ class TestBlankOutsourcingSubmit(FrappeTestCase):
 		self.assertEqual(out.get("stock_entry_name"), "MAT-STE-TEST-REPLAY")
 		self.assertIsNone(out.get("receipt_stock_entry_name"))
 		self.assertEqual(out.get("purchase_order_name"), "PO-TEST-REPLAY")
+		self.assertEqual(out.get("purchase_order_semi_finished_name"), "PO-TEST-REPLAY-SEMI")
 
 		frappe.delete_doc(LOG_DOCTYPE, log.name, force=True, ignore_permissions=True)
 		frappe.db.commit()

@@ -155,6 +155,7 @@ def _check_idempotency(key, force_retry):
 			"stock_entry_name",
 			"receipt_stock_entry_name",
 			"purchase_order_name",
+			"purchase_order_semi_finished_name",
 		],
 		limit=1,
 	)
@@ -170,6 +171,8 @@ def _check_idempotency(key, force_retry):
 			"stock_entry_name": row.stock_entry_name,
 			"receipt_stock_entry_name": row.receipt_stock_entry_name or None,
 			"purchase_order_name": row.purchase_order_name or None,
+			"purchase_order_semi_finished_name": row.get("purchase_order_semi_finished_name")
+			or None,
 		}
 	if force_retry:
 		for r in frappe.get_all(LOG_DOCTYPE, filters={"idempotency_key": key}, pluck="name"):
@@ -186,6 +189,7 @@ def _check_idempotency(key, force_retry):
 		"stock_entry_name": row.stock_entry_name,
 		"receipt_stock_entry_name": row.receipt_stock_entry_name or None,
 		"purchase_order_name": row.purchase_order_name or None,
+		"purchase_order_semi_finished_name": row.get("purchase_order_semi_finished_name") or None,
 		"operation_id": row.name,
 	}
 
@@ -198,6 +202,7 @@ def _finalize_log(
 	se=None,
 	receipt_se=None,
 	po=None,
+	po_semi=None,
 	err_code=None,
 	err_msg=None,
 	t0=None,
@@ -217,6 +222,7 @@ def _finalize_log(
 			"stock_entry_name": se or "",
 			"receipt_stock_entry_name": receipt_se or "",
 			"purchase_order_name": po or "",
+			"purchase_order_semi_finished_name": po_semi or "",
 			"error_code": err_code or "",
 			"error_message": (err_msg or "")[:2000] if err_msg else "",
 			"duration_ms": duration_ms or 0,
@@ -454,6 +460,55 @@ def _build_po_order_data(ctx, params, po_items):
 		base["order_confirmation_no"] = so
 		base["customer_order"] = so
 	return _merge_po_base(base, params.get("purchase_order_extra") or {})
+
+
+def _build_semi_finished_po_order_data(ctx, receipt_doc, params_in):
+	"""
+	毛坯委外第二张 PO：真实半成品物料、单价 0，供后续采购收货挂 PO；料费不与供应商结算。
+	行信息来自回库草稿 SE（与 _run_receipt_step 推导的物料/数量一致）。
+	"""
+	rows = list(getattr(receipt_doc, "items", None) or [])
+	if not rows:
+		raise ValueError(_("回库草稿无明细，无法生成半成品采购单"))
+	first = rows[0]
+	item_code = (getattr(first, "item_code", None) or "").strip()
+	if not item_code:
+		raise ValueError(_("回库草稿行缺少物料编码"))
+	qty = flt(getattr(first, "qty", None))
+	if qty <= 0:
+		raise ValueError(_("回库数量无效，无法生成半成品采购单"))
+	tw = (ctx.get("target_warehouse") or "").strip()
+	t_wh = (getattr(first, "t_warehouse", None) or "").strip()
+	line_wh = tw or t_wh
+	default_desc = _(
+		"毛坯由己方提供；半成品行单价为 0，仅用于采购收货关联（不与供应商结算料费）。"
+	)
+	custom_desc = (params_in.get("semi_finished_po_item_description") or "").strip()
+	desc = custom_desc or default_desc
+	item_row = {
+		"item_code": item_code,
+		"qty": qty,
+		"rate": 0,
+		"warehouse": line_wh,
+		"description": desc,
+	}
+	base = {
+		"supplier": ctx["supplier"],
+		"company": ctx["company"],
+		"transaction_date": cstr(ctx["transaction_date"]),
+		"schedule_date": cstr(ctx.get("schedule_date") or ctx["transaction_date"]),
+		"items": [item_row],
+	}
+	if tw:
+		base["set_warehouse"] = tw
+	so = (ctx.get("sales_order") or "").strip()
+	if so:
+		base["order_confirmation_no"] = so
+		base["customer_order"] = so
+	extra = params_in.get("purchase_order_semi_finished")
+	if isinstance(extra, dict) and extra:
+		return _merge_po_base(base, extra)
+	return base
 
 
 def _pick_bom_name_for_item(item_code, bom_no):
@@ -695,7 +750,16 @@ def _run_receipt_step(ctx, mr_doc, se_issue_doc):
 		return None, cstr(e)
 
 
-def _make_fail_response(code, msg, operation_id=None, mr=None, se=None, receipt_se=None, po=None):
+def _make_fail_response(
+	code,
+	msg,
+	operation_id=None,
+	mr=None,
+	se=None,
+	receipt_se=None,
+	po=None,
+	po_semi=None,
+):
 	return {
 		"success": False,
 		"error_code": code,
@@ -704,11 +768,12 @@ def _make_fail_response(code, msg, operation_id=None, mr=None, se=None, receipt_
 		"stock_entry_name": se,
 		"receipt_stock_entry_name": receipt_se,
 		"purchase_order_name": po,
+		"purchase_order_semi_finished_name": po_semi,
 		"operation_id": operation_id,
 	}
 
 
-def _make_success_response(operation_id, mr, se, receipt_se, po):
+def _make_success_response(operation_id, mr, se, receipt_se, po, po_semi=None):
 	return {
 		"success": True,
 		"replayed": False,
@@ -717,6 +782,7 @@ def _make_success_response(operation_id, mr, se, receipt_se, po):
 		"stock_entry_name": se,
 		"receipt_stock_entry_name": receipt_se,
 		"purchase_order_name": po,
+		"purchase_order_semi_finished_name": po_semi,
 	}
 
 
@@ -749,9 +815,11 @@ def _create_operation_log(idem, summary):
 		)
 
 
-def _finalize_fail_and_response(log_name, summary, t0, code, msg, mr=None, se=None, receipt_se=None, po=None):
+def _finalize_fail_and_response(
+	log_name, summary, t0, code, msg, mr=None, se=None, receipt_se=None, po=None, po_semi=None
+):
 	if log_name:
-		st = "Partial" if (mr or se or receipt_se or po) else "Failed"
+		st = "Partial" if (mr or se or receipt_se or po or po_semi) else "Failed"
 		_finalize_log(
 			log_name,
 			st,
@@ -759,15 +827,18 @@ def _finalize_fail_and_response(log_name, summary, t0, code, msg, mr=None, se=No
 			se=se,
 			receipt_se=receipt_se,
 			po=po,
+			po_semi=po_semi,
 			err_code=code,
 			err_msg=msg,
 			t0=t0,
 			summary=summary,
 		)
-	return _make_fail_response(code, msg, operation_id=log_name, mr=mr, se=se, receipt_se=receipt_se, po=po)
+	return _make_fail_response(
+		code, msg, operation_id=log_name, mr=mr, se=se, receipt_se=receipt_se, po=po, po_semi=po_semi
+	)
 
 
-def _finalize_success_and_response(log_name, summary, t0, mr, se, receipt_se, po):
+def _finalize_success_and_response(log_name, summary, t0, mr, se, receipt_se, po, po_semi=None):
 	if log_name:
 		_finalize_log(
 			log_name,
@@ -776,10 +847,11 @@ def _finalize_success_and_response(log_name, summary, t0, mr, se, receipt_se, po
 			se=se,
 			receipt_se=receipt_se,
 			po=po,
+			po_semi=po_semi,
 			t0=t0,
 			summary=summary,
 		)
-	return _make_success_response(log_name, mr, se, receipt_se, po)
+	return _make_success_response(log_name, mr, se, receipt_se, po, po_semi)
 
 
 def _check_submit_permissions(skip_po):
@@ -812,17 +884,34 @@ def _run_se_step(ctx, mr_doc):
 		return None, cstr(e)
 
 
-def _run_po_step(params_in, ctx):
+def _run_po_step(params_in, ctx, receipt_doc=None, *, dual_subcontract_po=False):
+	"""
+	第一张 PO：委外加工费（po_items，可归一到服务物料）。
+	毛坯委外且 dual_subcontract_po=True 时第二张 PO：推导的半成品、rate=0，用于收货。
+	返回 (service_po_name, semi_po_name|None, error_message|None)。
+	"""
 	try:
 		normalized_po_items = _normalize_po_items_to_service(params_in, ctx, ctx["po_items"])
 		po_data = _build_po_order_data(ctx, ctx, normalized_po_items)
 		po_result = save_purchase_order(order_data=po_data)
 		if po_result.get("error"):
-			return None, cstr(po_result["error"])
-		return (po_result.get("data") or {}).get("name"), None
+			return None, None, cstr(po_result["error"])
+		po_service = (po_result.get("data") or {}).get("name")
+		if (
+			not dual_subcontract_po
+			or bool(params_in.get("skip_semi_finished_purchase_order"))
+			or not receipt_doc
+		):
+			return po_service, None, None
+		semi_data = _build_semi_finished_po_order_data(ctx, receipt_doc, params_in)
+		po_result2 = save_purchase_order(order_data=semi_data)
+		if po_result2.get("error"):
+			return po_service, None, cstr(po_result2["error"])
+		po_semi = (po_result2.get("data") or {}).get("name")
+		return po_service, po_semi, None
 	except Exception as e:
 		frappe.db.rollback()
-		return None, cstr(e)
+		return None, None, cstr(e)
 
 
 def _apply_semi_finished_outsourcing_defaults(params_in):
@@ -836,8 +925,10 @@ def _apply_semi_finished_outsourcing_defaults(params_in):
 			params_in["po_service_item_name"] = PO_DEFAULT_SERVICE_ITEM_NAME_SEMI
 
 
-def _execute_outsourcing_submit(params_in, *, default_mr_target_warehouse=None):
-	"""共用编排：幂等 → 校验 → MR → 发料 SE → 回库草稿 SE → PO（可选）。"""
+def _execute_outsourcing_submit(
+	params_in, *, default_mr_target_warehouse=None, dual_subcontract_po=False
+):
+	"""共用编排：幂等 → 校验 → MR → 发料 SE → 回库草稿 SE → PO（可选，毛坯侧可双 PO）。"""
 	if default_mr_target_warehouse is None:
 		default_mr_target_warehouse = SEMI_FINISHED_WAREHOUSE
 	summary = _summary(params_in)
@@ -886,12 +977,25 @@ def _execute_outsourcing_submit(params_in, *, default_mr_target_warehouse=None):
 	if ctx["skip_po"]:
 		return _finalize_success_and_response(log_name, summary, t0, mr_name, se_name, receipt_name, None)
 
-	po_name, po_err = _run_po_step(params_in, ctx)
+	po_name, po_semi_name, po_err = _run_po_step(
+		params_in, ctx, receipt_doc, dual_subcontract_po=dual_subcontract_po
+	)
 	if po_err:
 		return _finalize_fail_and_response(
-			log_name, summary, t0, ERR_PO_FAILED, po_err, mr=mr_name, se=se_name, receipt_se=receipt_name
+			log_name,
+			summary,
+			t0,
+			ERR_PO_FAILED,
+			po_err,
+			mr=mr_name,
+			se=se_name,
+			receipt_se=receipt_name,
+			po=po_name,
+			po_semi=po_semi_name,
 		)
-	return _finalize_success_and_response(log_name, summary, t0, mr_name, se_name, receipt_name, po_name)
+	return _finalize_success_and_response(
+		log_name, summary, t0, mr_name, se_name, receipt_name, po_name, po_semi_name
+	)
 
 
 @frappe.whitelist(allow_guest=False, methods=["POST"])
@@ -907,12 +1011,21 @@ def submit_blank_outsourcing(**kwargs):
 	- skip_purchase_order: 为 true 时跳过 PO
 	- po_items: [{item_code, qty, rate?, warehouse?, sales_order?, sales_order_item?, ...}]（未 skip 时必填）
 	- target_warehouse / to_warehouse: MR 目标仓（须与发料仓不同）；未传时若存在「半成品 - B」且属本公司则作默认
-	- purchase_order: 可选 dict，合并进 PO（如 naming_series、taxes、title）
+	- purchase_order: 可选 dict，合并进**加工费 PO**（如 naming_series、taxes、title）
+	- purchase_order_semi_finished: 可选 dict，合并进**半成品零单价 PO**（第二张）
+	- semi_finished_po_item_description: 可选，覆盖半成品 PO 行说明
+	- skip_semi_finished_purchase_order: 可选 true 时仅保留加工费 PO（不生成第二张）
 	- idempotency_key: 可选，成功后可重放；失败需 force_retry=true
 	- force_retry: 可选
+
+	成功时：purchase_order_name 为委外加工费 PO；purchase_order_semi_finished_name 为半成品（rate=0）收货用 PO。
 	"""
 	params_in = _parse_body(kwargs)
-	return _execute_outsourcing_submit(params_in, default_mr_target_warehouse=SEMI_FINISHED_WAREHOUSE)
+	return _execute_outsourcing_submit(
+		params_in,
+		default_mr_target_warehouse=SEMI_FINISHED_WAREHOUSE,
+		dual_subcontract_po=True,
+	)
 
 
 @frappe.whitelist(allow_guest=False, methods=["POST"])
