@@ -109,7 +109,7 @@ def _attach_process_supplier_rows(item_details_cache, item_codes):
     rows = frappe.get_all(
         "BR Item Process Supplier",
         filters={"parent": ["in", names]},
-        fields=["parent", "br_process", "br_supplier_one", "idx"],
+        fields=["parent", "br_process", "br_supplier_one", "br_price_one", "idx"],
         order_by="parent asc, idx asc",
     )
     by_parent = {}
@@ -120,6 +120,27 @@ def _attach_process_supplier_rows(item_details_cache, item_codes):
         by_parent.setdefault(p, []).append(r)
     for ic in names:
         item_details_cache[ic]["process_supplier_rows"] = by_parent.get(ic, [])
+
+
+def get_item_process_supplier_row_for_resolved_process(item_details, resolved_process):
+    """
+    在 Item 已解析出的工艺名（与节点 process 一致）下，选取 BR Item Process Supplier 对应行。
+    多行同学艺时：优先 br_supplier_one 与 Item 默认供应商一致，否则取 idx 最小（查询已按 idx 排序）。
+    用于产品物料清单结构行补全供应商一/价格一；工艺来自 BOM Item.operation 且子表无同学艺时不返回行。
+    """
+    if not isinstance(item_details, dict) or not (resolved_process or "").strip():
+        return None
+    process = (resolved_process or "").strip()
+    rows = item_details.get("process_supplier_rows") or []
+    matches = [r for r in rows if (r.get("br_process") or "").strip() == process]
+    if not matches:
+        return None
+    default_supplier = (item_details.get("supplier") or "").strip()
+    if default_supplier:
+        for r in matches:
+            if (r.get("br_supplier_one") or "").strip() == default_supplier:
+                return r
+    return matches[0]
 
 
 def _resolve_bom_item_process(operation, item_details):

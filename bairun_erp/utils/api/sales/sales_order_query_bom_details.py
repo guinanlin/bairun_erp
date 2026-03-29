@@ -22,7 +22,12 @@ import re
 import frappe
 from frappe.utils import cint, flt, getdate
 
-from bairun_erp.utils.api.material.bom_query import _build_bom_tree, _get_item_tree_fields
+from bairun_erp.utils.api.material.bom_query import (
+    _attach_process_supplier_rows,
+    _build_bom_tree,
+    _get_item_tree_fields,
+    get_item_process_supplier_row_for_resolved_process,
+)
 
 
 def _get_bom_for_item(item_code, so_item_bom_no=None):
@@ -324,6 +329,18 @@ def _build_items(flat_nodes, item_details_cache, finished_product_wh=None):
             )
             if bin_rows and bin_rows[0].get("valuation_rate"):
                 estimated_cost = flt(bin_rows[0].valuation_rate)
+
+        # 结构行：BOM rate / 库存估价仍为空或 0 时，用 Item 子表「工艺-供应商」与 process 对齐的一行补供应商一、价格一
+        matched_ps = get_item_process_supplier_row_for_resolved_process(details, process)
+        if matched_ps:
+            psupp = (matched_ps.get("br_supplier_one") or "").strip()
+            if not (supplier or "").strip() and psupp:
+                supplier = psupp
+                supplier_name = _get_supplier_name(supplier)
+            if estimated_cost is None or flt(estimated_cost) == 0:
+                pv = matched_ps.get("br_price_one")
+                if pv is not None and str(pv).strip() != "":
+                    estimated_cost = flt(pv)
 
         loss_ratio = None
 
@@ -1009,6 +1026,8 @@ def get_product_bom_list(sales_order_name=None, item_code=None):
 
         item_codes = _collect_item_codes_from_flat(flat)
         item_details_cache = _get_item_tree_fields(item_codes) if item_codes else {}
+        if item_details_cache:
+            _attach_process_supplier_rows(item_details_cache, list(item_details_cache.keys()))
         # 成品（首行）的仓库与库存，补全 items 第一行，与 header 保持一致
         first_so_item = so_items[0] if so_items else None
         finished_product_wh = _get_finished_product_warehouse_and_stock(so_doc, first_so_item)

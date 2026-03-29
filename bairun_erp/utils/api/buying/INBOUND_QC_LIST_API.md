@@ -74,3 +74,42 @@ curl -s -X POST 'https://<host>/api/method/bairun_erp.utils.api.buying.quality_i
 ## 4. 提交质检
 
 列表仅查询；提交仍调用 **`submit_quality_inspection_and_stock_entry`**，传入本行的 `purchase_receipt`、`pr_item_name`。
+
+## 5. 联调报错：HTTP 417 / `No module named '...quality_inspection_inbound_list'`
+
+### 含义
+
+ERPNext 在解析 `cmd` 时需要 `import bairun_erp.utils.api.buying.quality_inspection_inbound_list`。若当前 **bench 目录下没有对应 `.py` 文件**（未合并代码、未发布到该主机、或 FastAPI 的 `ERPNEXT_BASE_URL` 指向了旧环境），会抛出 **`frappe.exceptions.ValidationError`**，HTTP 常为 **417**，正文含 **Failed to get method for command** 与 **No module named ...**。
+
+前端路径与参数一般无需修改；需在 **与网关一致的 ERPNext 站点** 上补齐代码并重启进程。
+
+### 实施检查清单
+
+1. **确认文件存在**（在运行 ERPNext 的 bench 上执行）：
+   ```bash
+   ls -la apps/bairun_erp/bairun_erp/utils/api/buying/quality_inspection_inbound_list.py
+   ```
+   若 `No such file`，说明该环境未拉到包含本接口的 `bairun_erp` 版本（需 `git pull` / 发版 / 同步 apps）。
+
+2. **确认包路径**：同目录下应有 `bairun_erp/utils/api/buying/__init__.py`（与其它子包一致），避免个别打包/同步工具忽略「非包目录」。
+
+3. **重载 Python 进程**（按贵司规范任选）：
+   ```bash
+   bench restart
+   ```
+   若使用 gunicorn/supervisor 多进程，需确保 **worker 已全部重启**，否则仍可能短暂命中旧代码。
+
+4. **白名单**：FastAPI / 网关需放行完整方法名（见上文 §3）；仅 ERPNext 侧有文件仍可能被网关 403，但不会出现 `No module named`。
+
+5. **冒烟**（在 **已安装 bairun_erp 的站点** 上，将 `site2.local` 换成实际站点名）：
+   ```bash
+   bench --site site2.local execute \
+     bairun_erp.utils.api.buying.quality_inspection_inbound_list.get_inbound_qc_list \
+     --kwargs '{"json_data":{"limit_page_length":1}}'
+   ```
+   无 Traceback、且业务上可在 `frappe.response` 中看到 `message` 即表示模块已加载成功。
+
+### 联调通过标准（与前端一致）
+
+- `/scm/qc/inbound` 不再出现「加载失败」类 Toast。
+- 接口成功时 `message` 为 `{ "items": [], "total_count": n }` 结构（允许真实空列表），且 **`total_count` 与分页逻辑一致**。
