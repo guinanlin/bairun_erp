@@ -1,7 +1,7 @@
 # Copyright (c) 2025, Bairun and contributors
 # 毛坯/半成品列表接口：待委外列表、已委外列表。
 # 毛坯：到库=入毛坯仓 SE+PR；委外=毛坯仓→半成品仓。
-# 半成品：到库=入半成品仓（即毛坯委外入半成品）；委外=半成品仓→成品仓。
+# 半成品：到库=入半成品仓（Material Transfer 毛坯→半成品，或 Material Receipt 入半成品仓，如毛坯委外编排回库 SE）；委外=半成品仓→成品仓。
 # 调拨单（Stock Entry）列表汇总含草稿(docstatus=0)与已提交(1)，不含已取消(2)。
 # 接口路径：bairun_erp.utils.api.stock.blank_list
 
@@ -106,11 +106,10 @@ def _get_received_by_key(list_type=LIST_TYPE_BLANK):
 	"""
 	到库数。
 	- blank: 入毛坯仓的 SE 行（reference_purchase_receipt 关联 PR 取销售订单）。
-	- semi_finished: 入半成品仓的 SE 行（Material Transfer 毛坯→半成品，project_no 从 SE.custom_customer_order）。
+	- semi_finished: 入半成品仓的 SE 行：① Material Transfer 毛坯→半成品；② Material Receipt 明细目标仓为半成品（来源仓可空，如 submit_blank_outsourcing 回库草稿）。project_no 均从 SE.custom_customer_order。
 	返回: dict key (project_no, item_code, warehouse) -> { "received_qty", "receipt_details" }
 	"""
 	if list_type == LIST_TYPE_SEMI_FINISHED:
-		# 半成品到库 = 调拨 毛坯→半成品，按入半成品仓视角汇总
 		se_meta = frappe.get_meta("Stock Entry")
 		has_customer_order = bool(se_meta.get_field("custom_customer_order"))
 		select = [
@@ -124,16 +123,25 @@ def _get_received_by_key(list_type=LIST_TYPE_BLANK):
 			select.append("se.custom_customer_order AS project_no")
 		else:
 			select.append("'' AS project_no")
-		sql = """
+		select_sql = ", ".join(select)
+		sql_mt = """
 			SELECT {}
 			FROM `tabStock Entry Detail` sed
 			INNER JOIN `tabStock Entry` se ON se.name = sed.parent AND {}
 			WHERE se.purpose = 'Material Transfer'
 			  AND sed.s_warehouse = %s AND sed.t_warehouse = %s
-		""".format(", ".join(select), _STE_DOCSTATUS_FOR_LIST_SQL)
-		rows = frappe.db.sql(sql, (BLANK_WAREHOUSE, SEMI_FINISHED_WAREHOUSE), as_dict=True)
+		""".format(select_sql, _STE_DOCSTATUS_FOR_LIST_SQL)
+		sql_mr = """
+			SELECT {}
+			FROM `tabStock Entry Detail` sed
+			INNER JOIN `tabStock Entry` se ON se.name = sed.parent AND {}
+			WHERE se.purpose = 'Material Receipt'
+			  AND sed.t_warehouse = %s
+		""".format(select_sql, _STE_DOCSTATUS_FOR_LIST_SQL)
+		rows_mt = frappe.db.sql(sql_mt, (BLANK_WAREHOUSE, SEMI_FINISHED_WAREHOUSE), as_dict=True)
+		rows_mr = frappe.db.sql(sql_mr, (SEMI_FINISHED_WAREHOUSE,), as_dict=True)
 		agg = {}
-		for r in rows:
+		for r in rows_mt + rows_mr:
 			project_no = (r.get("project_no") or "").strip()
 			warehouse = r.get("warehouse") or SEMI_FINISHED_WAREHOUSE
 			key = (project_no, r.get("item_code"), warehouse)

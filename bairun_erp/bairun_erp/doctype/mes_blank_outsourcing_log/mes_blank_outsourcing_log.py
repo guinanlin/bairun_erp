@@ -6,6 +6,6 @@ from frappe.model.document import Document
 
 
 class MESBlankOutsourcingLog(Document):
-	"""Audit / idempotency log for submit_blank_outsourcing."""
+	"""Audit / idempotency log for submit_blank_outsourcing / submit_semi_finished_outsourcing."""
 
 	pass

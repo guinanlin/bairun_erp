@@ -1,9 +1,13 @@
 # Copyright (c) 2026, Bairun and contributors
-# 毛坯 MES 委外：白名单编排 MR（发料）+ SE 出库 + 回库 SE（草稿）+ PO（可选）。
+# MES 委外：白名单编排 MR（发料）+ SE 出库 + 回库 SE（草稿）+ PO（可选）。
 #
-# 方法路径: bairun_erp.utils.api.mes.blank_outsourcing_submit.submit_blank_outsourcing
-# bench execute 示例:
+# 毛坯入口:
+#   bairun_erp.utils.api.mes.blank_outsourcing_submit.submit_blank_outsourcing
 #   bench --site site2.local execute bairun_erp.utils.api.mes.blank_outsourcing_submit.submit_blank_outsourcing --kwargs '{"json_data": {...}}'
+#
+# 半成品→成品入口（默认成品仓、PO 服务项「半成品委外」）:
+#   bairun_erp.utils.api.mes.blank_outsourcing_submit.submit_semi_finished_outsourcing
+#   bench --site site2.local execute bairun_erp.utils.api.mes.blank_outsourcing_submit.submit_semi_finished_outsourcing --kwargs '{"json_data": {...}}'
 
 from __future__ import unicode_literals
 
@@ -16,7 +20,7 @@ from frappe import _
 from frappe.utils import cstr, flt, getdate
 
 from bairun_erp.utils.api.buying.purchase_order_add import _resolve_warehouse, save_purchase_order
-from bairun_erp.utils.api.stock.blank_list import SEMI_FINISHED_WAREHOUSE
+from bairun_erp.utils.api.stock.blank_list import FINISHED_WAREHOUSE, SEMI_FINISHED_WAREHOUSE
 
 LOG_DOCTYPE = "MES Blank Outsourcing Log"
 
@@ -29,6 +33,9 @@ ERR_PO_FAILED = "PURCHASE_ORDER_FAILED"
 ERR_IDEMPOTENCY = "IDEMPOTENCY_CONFLICT"
 
 PO_DEFAULT_SERVICE_ITEM_NAME = "毛坯委外"
+PO_DEFAULT_SERVICE_ITEM_NAME_SEMI = "半成品委外"
+
+CUSTOM_BUSINESS_TYPE_SEMI_DEFAULT = "半成品转成品"
 
 
 def _parse_body(kwargs):
@@ -234,7 +241,7 @@ def _create_processing_log(idempotency_key, summary):
 	return doc.name
 
 
-def _validate_params(p):
+def _validate_params(p, default_mr_target_warehouse=None):
 	items = p.get("items") or []
 	if not items or not isinstance(items, list):
 		return None, {ERR_VALIDATION: _("items 须为非空数组")}
@@ -281,22 +288,24 @@ def _validate_params(p):
 		return None, {ERR_VALIDATION: _("sales_order 或 custom_sales_order_no 必填（回库步骤需按 SO/BOM 推导）")}
 	if sales_order and not frappe.db.exists("Sales Order", sales_order):
 		return None, {ERR_VALIDATION: _("销售订单 '{0}' 不存在").format(sales_order)}
+	if default_mr_target_warehouse is None:
+		default_mr_target_warehouse = SEMI_FINISHED_WAREHOUSE
 	tw = (p.get("target_warehouse") or p.get("to_warehouse") or "").strip()
 	if not tw:
-		if frappe.db.exists("Warehouse", SEMI_FINISHED_WAREHOUSE):
-			wc = frappe.db.get_value("Warehouse", SEMI_FINISHED_WAREHOUSE, "company")
+		if frappe.db.exists("Warehouse", default_mr_target_warehouse):
+			wc = frappe.db.get_value("Warehouse", default_mr_target_warehouse, "company")
 			if wc == company:
-				tw = SEMI_FINISHED_WAREHOUSE
+				tw = default_mr_target_warehouse
 	if not tw:
 		return None, {
 			ERR_VALIDATION: _(
-				"请传 target_warehouse（MR 目标仓，须与发料仓不同）；或未配置时确保存在与公司一致的半成品仓「{0}」"
-			).format(SEMI_FINISHED_WAREHOUSE)
+				"请传 target_warehouse（MR 目标仓，须与发料仓不同）；或未配置时确保存在与公司一致的标准仓「{0}」"
+			).format(default_mr_target_warehouse)
 		}
 	tw_resolved = _resolve_warehouse(tw, company)
 	if not tw_resolved or tw_resolved == wh:
 		return None, {
-			ERR_VALIDATION: _("target_warehouse 无效或与发料仓相同，请指定另一有效仓库（如半成品仓）"),
+			ERR_VALIDATION: _("target_warehouse 无效或与发料仓相同，请指定另一有效仓库"),
 		}
 	return (
 		{
@@ -422,13 +431,25 @@ def _create_stock_entry(ctx, mr_doc):
 
 def _build_po_order_data(ctx, params, po_items):
 	so = ctx.get("sales_order") or ""
+	tw = (ctx.get("target_warehouse") or "").strip()
+	items_out = []
+	for row in po_items or []:
+		if isinstance(row, dict):
+			nr = dict(row)
+			if tw and not (nr.get("warehouse") or "").strip():
+				nr["warehouse"] = tw
+			items_out.append(nr)
+		else:
+			items_out.append(row)
 	base = {
 		"supplier": ctx["supplier"],
 		"company": ctx["company"],
 		"transaction_date": cstr(ctx["transaction_date"]),
 		"schedule_date": cstr(ctx.get("schedule_date") or ctx["transaction_date"]),
-		"items": po_items,
+		"items": items_out,
 	}
+	if tw:
+		base["set_warehouse"] = tw
 	if so:
 		base["order_confirmation_no"] = so
 		base["customer_order"] = so
@@ -699,22 +720,10 @@ def _make_success_response(operation_id, mr, se, receipt_se, po):
 	}
 
 
-def _prepare_submit_context(kwargs):
-	params_in = _parse_body(kwargs)
-	summary = _summary(params_in)
-	idem = (params_in.get("idempotency_key") or "").strip() or None
-	force_retry = bool(params_in.get("force_retry"))
-	return {
-		"params_in": params_in,
-		"summary": summary,
-		"idem": idem,
-		"force_retry": force_retry,
-		"t0": time.time(),
-	}
-
-
-def _validate_and_build_ctx(params_in):
-	ctx, verr = _validate_params(params_in)
+def _validate_and_build_ctx(params_in, default_mr_target_warehouse=None):
+	if default_mr_target_warehouse is None:
+		default_mr_target_warehouse = SEMI_FINISHED_WAREHOUSE
+	ctx, verr = _validate_params(params_in, default_mr_target_warehouse=default_mr_target_warehouse)
 	if verr:
 		return None, _make_fail_response(
 			list(verr.keys())[0],
@@ -816,6 +825,75 @@ def _run_po_step(params_in, ctx):
 		return None, cstr(e)
 
 
+def _apply_semi_finished_outsourcing_defaults(params_in):
+	"""半成品委外入口：补全业务类型与 PO 服务物料名（可被子集显式传入覆盖）。"""
+	if not (params_in.get("custom_business_type") or "").strip():
+		params_in["custom_business_type"] = CUSTOM_BUSINESS_TYPE_SEMI_DEFAULT
+	if not bool(params_in.get("skip_purchase_order")):
+		if not (params_in.get("po_service_item_code") or "").strip() and not (
+			params_in.get("po_service_item_name") or ""
+		).strip():
+			params_in["po_service_item_name"] = PO_DEFAULT_SERVICE_ITEM_NAME_SEMI
+
+
+def _execute_outsourcing_submit(params_in, *, default_mr_target_warehouse=None):
+	"""共用编排：幂等 → 校验 → MR → 发料 SE → 回库草稿 SE → PO（可选）。"""
+	if default_mr_target_warehouse is None:
+		default_mr_target_warehouse = SEMI_FINISHED_WAREHOUSE
+	summary = _summary(params_in)
+	idem = (params_in.get("idempotency_key") or "").strip() or None
+	force_retry = bool(params_in.get("force_retry"))
+	t0 = time.time()
+
+	idem_res = _check_idempotency(idem, force_retry)
+	if idem_res is not None:
+		return idem_res
+
+	ctx, validation_err = _validate_and_build_ctx(
+		params_in, default_mr_target_warehouse=default_mr_target_warehouse
+	)
+	if validation_err:
+		return validation_err
+
+	log_or_err = _create_operation_log(idem, summary)
+	if isinstance(log_or_err, dict):
+		return log_or_err
+	log_name = log_or_err
+
+	permission_err = _check_submit_permissions(ctx["skip_po"])
+	if permission_err:
+		return _finalize_fail_and_response(
+			log_name, summary, t0, permission_err["error_code"], permission_err["message"]
+		)
+
+	mr_doc, mr_err = _run_mr_step(ctx)
+	if mr_err:
+		return _finalize_fail_and_response(log_name, summary, t0, ERR_MR_FAILED, mr_err)
+	mr_name = mr_doc.name
+
+	se_doc, se_err = _run_se_step(ctx, mr_doc)
+	if se_err:
+		return _finalize_fail_and_response(log_name, summary, t0, ERR_SE_FAILED, se_err, mr=mr_name)
+	se_name = se_doc.name
+
+	receipt_doc, receipt_err = _run_receipt_step(ctx, mr_doc, se_doc)
+	if receipt_err:
+		return _finalize_fail_and_response(
+			log_name, summary, t0, ERR_RECEIPT_FAILED, receipt_err, mr=mr_name, se=se_name
+		)
+	receipt_name = receipt_doc.name
+
+	if ctx["skip_po"]:
+		return _finalize_success_and_response(log_name, summary, t0, mr_name, se_name, receipt_name, None)
+
+	po_name, po_err = _run_po_step(params_in, ctx)
+	if po_err:
+		return _finalize_fail_and_response(
+			log_name, summary, t0, ERR_PO_FAILED, po_err, mr=mr_name, se=se_name, receipt_se=receipt_name
+		)
+	return _finalize_success_and_response(log_name, summary, t0, mr_name, se_name, receipt_name, po_name)
+
+
 @frappe.whitelist(allow_guest=False, methods=["POST"])
 def submit_blank_outsourcing(**kwargs):
 	"""
@@ -833,58 +911,18 @@ def submit_blank_outsourcing(**kwargs):
 	- idempotency_key: 可选，成功后可重放；失败需 force_retry=true
 	- force_retry: 可选
 	"""
-	req = _prepare_submit_context(kwargs)
-	params_in = req["params_in"]
-	summary = req["summary"]
-	idem = req["idem"]
-	t0 = req["t0"]
+	params_in = _parse_body(kwargs)
+	return _execute_outsourcing_submit(params_in, default_mr_target_warehouse=SEMI_FINISHED_WAREHOUSE)
 
-	idem_res = _check_idempotency(idem, req["force_retry"])
-	if idem_res is not None:
-		return idem_res
 
-	ctx, validation_err = _validate_and_build_ctx(params_in)
-	if validation_err:
-		return validation_err
+@frappe.whitelist(allow_guest=False, methods=["POST"])
+def submit_semi_finished_outsourcing(**kwargs):
+	"""
+	半成品→成品委外编排：与 submit_blank_outsourcing 同流程；默认 MR 目标仓「成品 - B」、
+	custom_business_type「半成品转成品」、PO 服务行默认按 Item.item_name「半成品委外」解析（可显式覆盖）。
 
-	log_or_err = _create_operation_log(idem, summary)
-	if isinstance(log_or_err, dict):
-		return log_or_err
-	log_name = log_or_err
-
-	permission_err = _check_submit_permissions(ctx["skip_po"])
-	if permission_err:
-		return _finalize_fail_and_response(
-			log_name, summary, t0, permission_err["error_code"], permission_err["message"]
-		)
-
-	# 编排步骤 1：创建并提交 MR（Material Issue）
-	mr_doc, mr_err = _run_mr_step(ctx)
-	if mr_err:
-		return _finalize_fail_and_response(log_name, summary, t0, ERR_MR_FAILED, mr_err)
-	mr_name = mr_doc.name
-
-	# 编排步骤 2：创建并提交 SE（Material Issue，关联 MR 行）
-	se_doc, se_err = _run_se_step(ctx, mr_doc)
-	if se_err:
-		return _finalize_fail_and_response(log_name, summary, t0, ERR_SE_FAILED, se_err, mr=mr_name)
-	se_name = se_doc.name
-
-	# 编排步骤 2.5：创建回库 SE（Material Receipt，docstatus=0 草稿，供仓管确认数量后提交）
-	receipt_doc, receipt_err = _run_receipt_step(ctx, mr_doc, se_doc)
-	if receipt_err:
-		return _finalize_fail_and_response(
-			log_name, summary, t0, ERR_RECEIPT_FAILED, receipt_err, mr=mr_name, se=se_name
-		)
-	receipt_name = receipt_doc.name
-
-	# 编排步骤 3：按需创建 PO（skip_purchase_order=true 时跳过）
-	if ctx["skip_po"]:
-		return _finalize_success_and_response(log_name, summary, t0, mr_name, se_name, receipt_name, None)
-
-	po_name, po_err = _run_po_step(params_in, ctx)
-	if po_err:
-		return _finalize_fail_and_response(
-			log_name, summary, t0, ERR_PO_FAILED, po_err, mr=mr_name, se=se_name, receipt_se=receipt_name
-		)
-	return _finalize_success_and_response(log_name, summary, t0, mr_name, se_name, receipt_name, po_name)
+	json_data 字段与 submit_blank_outsourcing 相同；未传 target_warehouse 时尝试默认成品仓（须与公司一致）。
+	"""
+	params_in = dict(_parse_body(kwargs))
+	_apply_semi_finished_outsourcing_defaults(params_in)
+	return _execute_outsourcing_submit(params_in, default_mr_target_warehouse=FINISHED_WAREHOUSE)
