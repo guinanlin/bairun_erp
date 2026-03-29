@@ -201,7 +201,13 @@ def update_item_properties_by_item_code(item_code=None, **kwargs):
 		wh_raw = payload.get("warehouse")
 		if wh_raw is not None and isinstance(wh_raw, str) and wh_raw.strip():
 			if not resolve_warehouse_name(wh_raw.strip(), company):
-				return {"success": False, "message": "warehouse 无法匹配到系统仓库"}
+				return {
+					"success": False,
+					"message": "在当前公司「{0}」下无法将仓库展示名「{1}」解析为有效仓库，请检查仓库主数据或公司是否一致".format(
+						company,
+						wh_raw.strip(),
+					),
+				}
 
 	if "item_name" in payload:
 		nm = payload.get("item_name")
@@ -213,10 +219,19 @@ def update_item_properties_by_item_code(item_code=None, **kwargs):
 	if attr_only:
 		apply_item_attrs(item_doc, attr_only)
 
+	warehouse_echo = None
+	resolved_warehouse_name = None
 	if "warehouse" in payload:
 		wh_raw = payload.get("warehouse")
 		if wh_raw is not None and isinstance(wh_raw, str) and wh_raw.strip():
-			apply_item_warehouse(item_doc, wh_raw.strip(), company)
+			warehouse_echo = wh_raw.strip()
+			apply_item_warehouse(
+				item_doc,
+				warehouse_echo,
+				company,
+				propagate_to_all_item_defaults=True,
+			)
+			resolved_warehouse_name = resolve_warehouse_name(warehouse_echo, company)
 
 	try:
 		item_doc.save()
@@ -227,11 +242,20 @@ def update_item_properties_by_item_code(item_code=None, **kwargs):
 		return {"success": False, "message": str(e)}
 
 	item_doc.reload()
+	data = {
+		"item_code": item_doc.item_code or item_doc.name,
+		"modified": item_doc.modified,
+	}
+	if warehouse_echo is not None:
+		data["warehouse"] = warehouse_echo
+	if resolved_warehouse_name:
+		data["default_warehouse"] = resolved_warehouse_name
+		wh_dn = frappe.db.get_value("Warehouse", resolved_warehouse_name, "warehouse_name")
+		if wh_dn:
+			data["warehouse_name"] = wh_dn
+
 	return {
 		"success": True,
 		"message": "updated",
-		"data": {
-			"item_code": item_doc.item_code or item_doc.name,
-			"modified": item_doc.modified,
-		},
+		"data": data,
 	}
