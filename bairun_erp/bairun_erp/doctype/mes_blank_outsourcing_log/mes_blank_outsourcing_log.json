@@ -63,7 +63,7 @@
   {
    "fieldname": "purchase_order_name",
    "fieldtype": "Data",
-   "label": "Purchase Order (Service)"
+   "label": "Purchase Order"
   },
   {
    "fieldname": "purchase_order_semi_finished_name",

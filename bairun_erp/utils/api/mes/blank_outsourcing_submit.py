@@ -1,5 +1,6 @@
 # Copyright (c) 2026, Bairun and contributors
 # MES 委外：白名单编排 MR（发料）+ SE 出库 + 回库 SE（草稿）+ PO（可选）。
+# 毛坯 PO：单张采购单，半成品料号，单价=po_items 加工费合计÷半成品数量（业务简化视同采购）。
 #
 # 毛坯入口:
 #   bairun_erp.utils.api.mes.blank_outsourcing_submit.submit_blank_outsourcing
@@ -462,36 +463,74 @@ def _build_po_order_data(ctx, params, po_items):
 	return _merge_po_base(base, params.get("purchase_order_extra") or {})
 
 
-def _build_semi_finished_po_order_data(ctx, receipt_doc, params_in):
-	"""
-	毛坯委外第二张 PO：真实半成品物料、单价 0，供后续采购收货挂 PO；料费不与供应商结算。
-	行信息来自回库草稿 SE（与 _run_receipt_step 推导的物料/数量一致）。
-	"""
+def _parse_receipt_semi_line_for_po(ctx, receipt_doc):
+	"""从回库草稿 SE 取半成品行：物料、数量、入库仓（与 _run_receipt_step 一致）。"""
 	rows = list(getattr(receipt_doc, "items", None) or [])
 	if not rows:
-		raise ValueError(_("回库草稿无明细，无法生成半成品采购单"))
+		raise ValueError(_("回库草稿无明细，无法生成采购单"))
 	first = rows[0]
 	item_code = (getattr(first, "item_code", None) or "").strip()
 	if not item_code:
 		raise ValueError(_("回库草稿行缺少物料编码"))
 	qty = flt(getattr(first, "qty", None))
 	if qty <= 0:
-		raise ValueError(_("回库数量无效，无法生成半成品采购单"))
+		raise ValueError(_("回库数量无效，无法生成采购单"))
 	tw = (ctx.get("target_warehouse") or "").strip()
 	t_wh = (getattr(first, "t_warehouse", None) or "").strip()
 	line_wh = tw or t_wh
+	return {"item_code": item_code, "qty": qty, "warehouse": line_wh}
+
+
+def _po_items_processing_total(po_items):
+	"""汇总 po_items 中的加工费金额：优先 amount，否则 rate * qty。"""
+	total = 0.0
+	for row in po_items or []:
+		if not isinstance(row, dict):
+			continue
+		amt = row.get("amount")
+		if amt is not None and flt(amt) != 0:
+			total += flt(amt)
+			continue
+		total += flt(row.get("rate")) * flt(row.get("qty"))
+	return total
+
+
+def _build_blank_single_subcontract_po_order_data(ctx, receipt_doc, params_in):
+	"""
+	毛坯委外单张 PO：行物料为推导的半成品，数量=应回库数量；
+	单价 = po_items 加工费合计 / 半成品数量（视同采购半成品，非标准核算）。
+	"""
+	semi = _parse_receipt_semi_line_for_po(ctx, receipt_doc)
+	semi_qty = semi["qty"]
+	po_items = ctx.get("po_items") or []
+	proc_total = _po_items_processing_total(po_items)
+	if proc_total <= 0:
+		raise ValueError(
+			_("po_items 加工费金额须大于 0（各行列传 amount 或 rate×qty，合计为委外加工费总额）")
+		)
+	unit_rate = proc_total / semi_qty
+	materials_desc = _materials_summary_for_po(ctx.get("items") or params_in.get("items"))
 	default_desc = _(
-		"毛坯由己方提供；半成品行单价为 0，仅用于采购收货关联（不与供应商结算料费）。"
+		"毛坯由己方提供；本行单价为委外加工费分摊，视同采购半成品（非标准核算）。"
 	)
 	custom_desc = (params_in.get("semi_finished_po_item_description") or "").strip()
-	desc = custom_desc or default_desc
+	desc_parts = [custom_desc or default_desc]
+	if materials_desc:
+		desc_parts.append(materials_desc)
+	description = "；".join(desc_parts)
 	item_row = {
-		"item_code": item_code,
-		"qty": qty,
-		"rate": 0,
-		"warehouse": line_wh,
-		"description": desc,
+		"item_code": semi["item_code"],
+		"qty": semi_qty,
+		"rate": unit_rate,
+		"warehouse": semi["warehouse"],
+		"description": description,
 	}
+	first = po_items[0] if po_items else {}
+	for copy_key in ("sales_order", "sales_order_item", "schedule_date", "uom", "stock_uom"):
+		val = first.get(copy_key)
+		if val is not None and val != "":
+			item_row.setdefault(copy_key, val)
+	tw = (ctx.get("target_warehouse") or "").strip()
 	base = {
 		"supplier": ctx["supplier"],
 		"company": ctx["company"],
@@ -505,8 +544,9 @@ def _build_semi_finished_po_order_data(ctx, receipt_doc, params_in):
 	if so:
 		base["order_confirmation_no"] = so
 		base["customer_order"] = so
-	extra = params_in.get("purchase_order_semi_finished")
-	if isinstance(extra, dict) and extra:
+	extra = dict(ctx.get("purchase_order_extra") or {})
+	extra.pop("items", None)
+	if extra:
 		return _merge_po_base(base, extra)
 	return base
 
@@ -884,31 +924,30 @@ def _run_se_step(ctx, mr_doc):
 		return None, cstr(e)
 
 
-def _run_po_step(params_in, ctx, receipt_doc=None, *, dual_subcontract_po=False):
+def _run_po_step(params_in, ctx, receipt_doc=None, *, blank_single_processing_po=False):
 	"""
-	第一张 PO：委外加工费（po_items，可归一到服务物料）。
-	毛坯委外且 dual_subcontract_po=True 时第二张 PO：推导的半成品、rate=0，用于收货。
-	返回 (service_po_name, semi_po_name|None, error_message|None)。
+	半成品→成品委外：归一到服务物料的一张 PO（po_items）。
+	毛坯委外 blank_single_processing_po=True：单张 PO，半成品料号 + 单价=加工费总额/数量。
+	返回 (purchase_order_name, purchase_order_semi_finished_name|None, error_message|None)。
+	第二张 name 仅兼容旧日志字段，毛坯单 PO 模式下恒为 None。
 	"""
 	try:
+		if blank_single_processing_po:
+			if not receipt_doc:
+				return None, None, _("缺少回库草稿，无法生成采购单")
+			po_data = _build_blank_single_subcontract_po_order_data(ctx, receipt_doc, params_in)
+			po_result = save_purchase_order(order_data=po_data)
+			if po_result.get("error"):
+				return None, None, cstr(po_result["error"])
+			po_name = (po_result.get("data") or {}).get("name")
+			return po_name, None, None
 		normalized_po_items = _normalize_po_items_to_service(params_in, ctx, ctx["po_items"])
 		po_data = _build_po_order_data(ctx, ctx, normalized_po_items)
 		po_result = save_purchase_order(order_data=po_data)
 		if po_result.get("error"):
 			return None, None, cstr(po_result["error"])
-		po_service = (po_result.get("data") or {}).get("name")
-		if (
-			not dual_subcontract_po
-			or bool(params_in.get("skip_semi_finished_purchase_order"))
-			or not receipt_doc
-		):
-			return po_service, None, None
-		semi_data = _build_semi_finished_po_order_data(ctx, receipt_doc, params_in)
-		po_result2 = save_purchase_order(order_data=semi_data)
-		if po_result2.get("error"):
-			return po_service, None, cstr(po_result2["error"])
-		po_semi = (po_result2.get("data") or {}).get("name")
-		return po_service, po_semi, None
+		po_name = (po_result.get("data") or {}).get("name")
+		return po_name, None, None
 	except Exception as e:
 		frappe.db.rollback()
 		return None, None, cstr(e)
@@ -926,9 +965,9 @@ def _apply_semi_finished_outsourcing_defaults(params_in):
 
 
 def _execute_outsourcing_submit(
-	params_in, *, default_mr_target_warehouse=None, dual_subcontract_po=False
+	params_in, *, default_mr_target_warehouse=None, blank_single_processing_po=False
 ):
-	"""共用编排：幂等 → 校验 → MR → 发料 SE → 回库草稿 SE → PO（可选，毛坯侧可双 PO）。"""
+	"""共用编排：幂等 → 校验 → MR → 发料 SE → 回库草稿 SE → PO（可选）。"""
 	if default_mr_target_warehouse is None:
 		default_mr_target_warehouse = SEMI_FINISHED_WAREHOUSE
 	summary = _summary(params_in)
@@ -978,7 +1017,7 @@ def _execute_outsourcing_submit(
 		return _finalize_success_and_response(log_name, summary, t0, mr_name, se_name, receipt_name, None)
 
 	po_name, po_semi_name, po_err = _run_po_step(
-		params_in, ctx, receipt_doc, dual_subcontract_po=dual_subcontract_po
+		params_in, ctx, receipt_doc, blank_single_processing_po=blank_single_processing_po
 	)
 	if po_err:
 		return _finalize_fail_and_response(
@@ -1009,22 +1048,20 @@ def submit_blank_outsourcing(**kwargs):
 	- sales_order | custom_sales_order_no（可选，须为 Sales Order name）
 	- custom_business_type（可选，须与 Material Request 自定义选项一致）
 	- skip_purchase_order: 为 true 时跳过 PO
-	- po_items: [{item_code, qty, rate?, warehouse?, sales_order?, sales_order_item?, ...}]（未 skip 时必填）
+	- po_items: 未 skip 时必填。每行须含 item_code（可仍为服务类占位物料）；**加工费**用 amount 或 rate×qty 表达，**多行金额相加**为委外加工费总额。最终仅生成**一张 PO**：物料为 BOM 推导的**半成品**，数量=应回库数量，**单价=加工费总额÷半成品数量**。
 	- target_warehouse / to_warehouse: MR 目标仓（须与发料仓不同）；未传时若存在「半成品 - B」且属本公司则作默认
-	- purchase_order: 可选 dict，合并进**加工费 PO**（如 naming_series、taxes、title）
-	- purchase_order_semi_finished: 可选 dict，合并进**半成品零单价 PO**（第二张）
-	- semi_finished_po_item_description: 可选，覆盖半成品 PO 行说明
-	- skip_semi_finished_purchase_order: 可选 true 时仅保留加工费 PO（不生成第二张）
+	- purchase_order: 可选 dict，合并进 PO 头（如 naming_series、taxes、title）；**勿传 items**（行由系统生成）
+	- semi_finished_po_item_description: 可选，追加到 PO 行说明前缀
 	- idempotency_key: 可选，成功后可重放；失败需 force_retry=true
 	- force_retry: 可选
 
-	成功时：purchase_order_name 为委外加工费 PO；purchase_order_semi_finished_name 为半成品（rate=0）收货用 PO。
+	成功时：仅 purchase_order_name；purchase_order_semi_finished_name 恒为 null（字段保留兼容旧日志）。
 	"""
 	params_in = _parse_body(kwargs)
 	return _execute_outsourcing_submit(
 		params_in,
 		default_mr_target_warehouse=SEMI_FINISHED_WAREHOUSE,
-		dual_subcontract_po=True,
+		blank_single_processing_po=True,
 	)
 
 
