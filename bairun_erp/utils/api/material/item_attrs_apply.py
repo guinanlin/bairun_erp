@@ -138,6 +138,23 @@ def resolve_warehouse_name(warehouse_input, company):
 	return None
 
 
+def item_default_wh_to_canvas_display(internal_wh_name, company):
+	"""
+	将 Item Default 中的 default_warehouse（Warehouse Link name）转为 BOM 画布下拉的展示名。
+	与 resolve_warehouse_name / 更新物料 使用的 UI 标签一致；无法匹配映射时退回仓库的 warehouse_name。
+	"""
+	if not internal_wh_name or not isinstance(internal_wh_name, str) or not internal_wh_name.strip():
+		return ""
+	if not company:
+		return internal_wh_name.strip()
+	wh = internal_wh_name.strip()
+	for ui_label in _WAREHOUSE_UI_TO_NAME_STEMS:
+		if resolve_warehouse_name(ui_label, company) == wh:
+			return ui_label
+	dn = frappe.db.get_value("Warehouse", wh, "warehouse_name")
+	return (dn or wh).strip()
+
+
 def apply_item_warehouse(item_doc, warehouse, company, propagate_to_all_item_defaults=True):
 	"""
 	将仓库写入 Item 的 item_defaults 子表（default_warehouse）。

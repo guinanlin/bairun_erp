@@ -15,6 +15,8 @@ from __future__ import unicode_literals
 
 import frappe
 
+from bairun_erp.utils.api.material.item_attrs_apply import item_default_wh_to_canvas_display
+from bairun_erp.utils.api.material.item_properties_update import _get_default_company
 
 # Item 自定义/扩展字段映射：规范字段名 -> 系统字段名
 _ITEM_EXTRA_FIELDS = [
@@ -170,7 +172,8 @@ def _resolve_bom_item_process(operation, item_details):
 
 def _get_item_tree_fields(item_codes):
     """
-    批量获取 Item 的 item_group、stock_uom、default_warehouse、default_supplier。
+    批量获取 Item 的 item_group、stock_uom、默认仓库（与 update_item_properties_by_item_code 同一数据源：
+    Item Default 子表 default_warehouse，再转为画布展示名）、default_supplier。
     返回 dict: item_code -> {item_group, stock_uom, warehouse, supplier}
     """
     if not item_codes:
@@ -183,6 +186,24 @@ def _get_item_tree_fields(item_codes):
     if meta.get_field("default_supplier"):
         fields.append("default_supplier")
 
+    company = _get_default_company()
+    internal_wh_by_item = {}
+    if company:
+        id_rows = frappe.get_all(
+            "Item Default",
+            filters={
+                "parent": ["in", item_codes],
+                "parenttype": "Item",
+                "company": company,
+            },
+            fields=["parent", "default_warehouse"],
+        )
+        for ir in id_rows:
+            parent = ir.get("parent")
+            dw = (ir.get("default_warehouse") or "").strip()
+            if parent and dw:
+                internal_wh_by_item[parent] = dw
+
     rows = frappe.get_all(
         "Item",
         filters={"name": ["in", item_codes]},
@@ -193,10 +214,12 @@ def _get_item_tree_fields(item_codes):
         ic = r.get("name")
         if not ic:
             continue
+        wh_main = (r.get("default_warehouse") or "").strip() if "default_warehouse" in fields else ""
+        internal_wh = internal_wh_by_item.get(ic) or wh_main
         result[ic] = {
             "item_group": (r.get("item_group") or "").strip(),
             "stock_uom": (r.get("stock_uom") or "").strip() or "Nos",
-            "warehouse": (r.get("default_warehouse") or "").strip(),
+            "warehouse": item_default_wh_to_canvas_display(internal_wh, company),
             "supplier": (r.get("default_supplier") or "").strip(),
             "description": (r.get("description") or "").strip() if r.get("description") else "",
         }
@@ -231,7 +254,10 @@ def _bom_item_to_tree_node(bi, bom_doc, item_details, parent_bom_qty=1):
     details = item_details.get(item_code, {})
     bom_qty = float(bi.stock_qty or bi.qty or 0) / float(parent_bom_qty or 1)
 
-    warehouse = (getattr(bi, "source_warehouse", None) or "").strip() or details.get("warehouse", "")
+    # 主档默认仓优先（与「更新当前物料」一致）；无则回落到 BOM 行上的 source_warehouse
+    warehouse = (details.get("warehouse") or "").strip() or (
+        getattr(bi, "source_warehouse", None) or ""
+    ).strip()
     process = _resolve_bom_item_process(getattr(bi, "operation", None), details)
     desc = (getattr(bi, "description", None) or "").strip() or details.get("description", "")
 
@@ -323,10 +349,6 @@ def _build_bom_tree(bom_name, item_details_cache=None):
                 sub_tree["bom_qty"] = round(
                     float(bi.stock_qty or bi.qty or 0) / parent_qty, 6
                 )
-                # 子 BOM 根节点继承父 BOM Item 的 source_warehouse，用于 inventoryQty 取数
-                _wh = (getattr(bi, "source_warehouse", None) or "").strip()
-                if _wh:
-                    sub_tree["warehouse"] = _wh
                 root["children"].append(sub_tree)
             else:
                 fallback = _bom_item_to_tree_node(bi, bom_doc, item_details_cache, parent_qty)
