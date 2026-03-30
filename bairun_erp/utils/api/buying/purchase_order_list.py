@@ -467,7 +467,9 @@ def get_purchase_order_unfulfilled_list(**kwargs):
 		select_parts.append("COALESCE(po.customer_order, item.sales_order) as customer_order")
 	else:
 		select_parts.append("item.sales_order as customer_order")
-	for f in ("rework_qty", "order_confirmation_status", "warehouse_slot"):
+	if po_meta.get_field("order_confirmation_status"):
+		select_parts.append("po.order_confirmation_status as order_confirmation_status")
+	for f in ("rework_qty", "warehouse_slot"):
 		if item_meta.get_field(f):
 			select_parts.append("item.{} as {}".format(f, f))
 
