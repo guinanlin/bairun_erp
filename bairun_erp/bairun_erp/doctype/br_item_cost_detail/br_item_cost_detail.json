@@ -1,0 +1,120 @@
+{
+ "actions": [],
+ "creation": "2026-03-31 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "br_injection_molding_per_day",
+  "br_cavity_count",
+  "br_cycle_time",
+  "br_raw_material",
+  "br_price_per_gram",
+  "br_weight_grams",
+  "br_material_cost_yuan",
+  "br_seconds_per_hour",
+  "br_daily_output",
+  "br_unit_product_cost",
+  "br_auditor",
+  "br_audit_status"
+ ],
+ "fields": [
+  {
+   "fieldname": "br_injection_molding_per_day",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "\u6ce8\u5851/\u5929",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "br_cavity_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "1\u51fa\u51e0",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "br_cycle_time",
+   "fieldtype": "Float",
+   "description": "\u5355\u4f4d\u901a\u5e38\u4e3a\u79d2\uff08\u7528\u4e8e\u4e0e3600\u6362\u7b97\u6bcf\u5c0f\u65f6\u5468\u671f\u6570\uff09",
+   "in_list_view": 1,
+   "label": "\u5468\u671f",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "br_raw_material",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "\u539f\u6750\u6599"
+  },
+  {
+   "fieldname": "br_price_per_gram",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "\u514b\u5355\u4ef7",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "br_weight_grams",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "\u91cd\u91cf (\u514b)",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "br_material_cost_yuan",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "\u6750\u6599\u6210\u672c (\u5143)",
+   "read_only": 1
+  },
+  {
+   "default": "3600",
+   "fieldname": "br_seconds_per_hour",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "\u5468\u671f1\u5c0f\u65f6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "br_daily_output",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "\u6bcf\u5929\u51fa\u4ea7\u91cf",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "br_unit_product_cost",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "\u5355\u4e2a\u4ea7\u54c1\u6210\u672c",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "br_auditor",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "\u5ba1\u6838\u4eba"
+  },
+  {
+   "default": "\u672a\u5ba1\u6838",
+   "fieldname": "br_audit_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "\u5ba1\u6838\u72b6\u6001",
+   "options": "\u5df2\u5ba1\u6838\n\u672a\u5ba1\u6838"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-03-31 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Bairun Erp",
+ "name": "BR Item Cost Detail",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0
+}
