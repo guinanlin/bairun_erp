@@ -37,6 +37,22 @@ ALLOWED_ORDER_FIELDS = {
 	"creation": "item.creation",
 }
 
+# 成本明细子表允许通过白名单接口更新的字段（不含只读/派生字段）
+COST_DETAIL_UPDATABLE_FIELDS = frozenset(
+	{
+		"br_injection_molding_per_day",
+		"br_cavity_count",
+		"br_cycle_time",
+		"br_raw_material",
+		"br_price_per_gram",
+		"br_weight_grams",
+		"br_daily_output",
+		"br_unit_product_cost",
+		"br_auditor",
+		"br_audit_status",
+	}
+)
+
 
 def _parse_json_data(kwargs):
 	jd = kwargs.get("json_data")
@@ -159,6 +175,7 @@ def _get_cost_rows_by_item(item_codes):
 		fields=[
 			"parent",
 			"idx",
+			"br_process",
 			"br_injection_molding_per_day",
 			"br_cavity_count",
 			"br_cycle_time",
@@ -262,6 +279,7 @@ def _build_row(item_row, category, table_form, row_no, cost, process_rows):
 		"row_no": row_no,
 		"item_code": item_row.get("item_code"),
 		"item_name": item_row.get("item_name") or "",
+		"process": (cost.get("br_process") or "").strip(),
 		"machine_cost_per_piece": _to_float_or_none(cost.get("br_injection_molding_per_day")),
 		"output_per_shot": _to_float_or_none(cost.get("br_cavity_count")),
 		"cycle_seconds": _to_float_or_none(cost.get("br_cycle_time")),
@@ -353,3 +371,123 @@ def get_material_details_by_category(**kwargs):
 	frappe.response["message"] = message
 	frappe.response["total_count"] = total_count
 	return
+
+
+def _merge_cost_detail_updates_from_payload(p):
+	"""合并 updates / fields 对象，以及顶层同名字段。"""
+	updates = {}
+	if isinstance(p.get("updates"), dict):
+		updates.update(p["updates"])
+	if isinstance(p.get("fields"), dict):
+		updates.update(p["fields"])
+	for key in COST_DETAIL_UPDATABLE_FIELDS:
+		if key in p:
+			updates[key] = p[key]
+	return updates
+
+
+def _find_cost_detail_row(doc, process, cost_detail_name=None):
+	"""
+	在 Item.br_cost_details 中定位一行。
+	若传入 cost_detail_name，则按子表 name 查找并校验工艺一致；
+	否则按 br_process 匹配；多行同工艺时返回 None 表示需调用方报错。
+	"""
+	rows = doc.get("br_cost_details") or []
+	if cost_detail_name:
+		for row in rows:
+			if row.name == cost_detail_name:
+				if (row.br_process or "").strip() != process:
+					frappe.throw(
+						"cost_detail_name 对应的行工艺与 process 不一致"
+					)
+				return row
+		frappe.throw("未找到 cost_detail_name 对应的成本明细行")
+
+	matched = [r for r in rows if (r.br_process or "").strip() == process]
+	if not matched:
+		return None
+	if len(matched) > 1:
+		return "ambiguous"
+	return matched[0]
+
+
+@frappe.whitelist(allow_guest=False, methods=["POST"])
+def update_item_cost_detail_by_process(**kwargs):
+	"""
+	按物料编码 + 工艺更新 Item 子表「成本明细」中对应一行。
+
+	入参（支持 json_data 包裹）:
+	- item_code: 必填，物料编码（Item.name）
+	- process / br_process: 必填，工艺，须在 ALLOWED_CATEGORIES 内
+	- cost_detail_name: 可选，子表行 name；同一物料下存在多条相同工艺时必填
+	- updates 或 fields: 可选，dict，要更新的字段
+	- 也可将 COST_DETAIL_UPDATABLE_FIELDS 中的字段直接放在顶层传入
+
+	只读/派生字段（材料成本、周期1小时等）由子表 validate 自动计算，勿传。
+	"""
+	p = _parse_json_data(kwargs)
+	item_code = (p.get("item_code") or "").strip()
+	process = (p.get("process") or p.get("br_process") or "").strip()
+	cost_detail_name = (p.get("cost_detail_name") or p.get("row_name") or "").strip()
+
+	if not item_code:
+		frappe.throw("item_code is required")
+	if not process:
+		frappe.throw("process is required")
+	if process not in ALLOWED_CATEGORIES:
+		frappe.throw("invalid process: {}".format(process))
+
+	updates = _merge_cost_detail_updates_from_payload(p)
+	if not updates:
+		frappe.throw("没有可更新的字段，请在 updates 或顶层传入允许的成本明细字段")
+
+	bad = set(updates.keys()) - COST_DETAIL_UPDATABLE_FIELDS
+	if bad:
+		frappe.throw("不允许更新的字段: {}".format(", ".join(sorted(bad))))
+
+	if not frappe.has_permission("Item", "write"):
+		frappe.throw("没有修改物料的权限", frappe.PermissionError)
+
+	doc = frappe.get_doc("Item", item_code)
+	row = _find_cost_detail_row(doc, process, cost_detail_name or None)
+	if row == "ambiguous":
+		frappe.throw(
+			"该物料存在多条相同工艺的成本明细，请传入 cost_detail_name 指定子表行 name"
+		)
+	if row is None:
+		frappe.throw("未找到该物料下工艺为「{}」的成本明细行".format(process))
+
+	row_name = row.name
+	for fieldname, value in updates.items():
+		setattr(row, fieldname, value)
+
+	doc.save()
+
+	saved_row = None
+	for r in doc.br_cost_details or []:
+		if r.name == row_name:
+			saved_row = r
+			break
+	if not saved_row:
+		saved_row = row
+
+	out = {
+		"ok": True,
+		"item_code": item_code,
+		"cost_detail_name": saved_row.name,
+		"process": (saved_row.br_process or "").strip(),
+		"br_injection_molding_per_day": saved_row.br_injection_molding_per_day,
+		"br_cavity_count": saved_row.br_cavity_count,
+		"br_cycle_time": saved_row.br_cycle_time,
+		"br_raw_material": saved_row.br_raw_material,
+		"br_price_per_gram": saved_row.br_price_per_gram,
+		"br_weight_grams": saved_row.br_weight_grams,
+		"br_material_cost_yuan": saved_row.br_material_cost_yuan,
+		"br_seconds_per_hour": saved_row.br_seconds_per_hour,
+		"br_daily_output": saved_row.br_daily_output,
+		"br_unit_product_cost": saved_row.br_unit_product_cost,
+		"br_auditor": saved_row.br_auditor,
+		"br_audit_status": saved_row.br_audit_status,
+	}
+	frappe.response["message"] = out
+	return out

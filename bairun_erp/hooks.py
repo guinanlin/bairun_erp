@@ -136,6 +136,11 @@ override_doctype_class = {
 # Document Events
 # ---------------
 # Hook on document methods and events
+doc_events = {
+	"Item": {
+		"validate": "bairun_erp.item_events.ensure_cost_details_for_process_suppliers",
+	}
+}
 
 # Scheduled Tasks
 # ---------------

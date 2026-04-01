@@ -5,6 +5,7 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "br_process",
   "br_injection_molding_per_day",
   "br_cavity_count",
   "br_cycle_time",
@@ -19,6 +20,14 @@
   "br_audit_status"
  ],
  "fields": [
+  {
+   "fieldname": "br_process",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "\u5de5\u827a",
+   "options": "\u6ce8\u5851\nUV\u9540\n\u7f69\u5149\n\u55b7\u6d82\n\u6c34\u9540\n\u6ef4\u6cb9\n\u70b9\u94bb\n\u7ec4\u88c5\n\u624b\u5de5\u6d3b\n\u9970\u54c1\u914d\u4ef6\n\u70eb\u91d1\n\u5370\u5237\n\u73bb\u7483\u74f6\n\u6c34\u8f6c\u5370\n\u70ed\u8f6c\u5370\n\u690d\u7ed2",
+   "placeholder": "\u8bf7\u9009\u62e9"
+  },
   {
    "fieldname": "br_injection_molding_per_day",
    "fieldtype": "Float",
