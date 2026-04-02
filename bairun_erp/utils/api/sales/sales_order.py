@@ -18,7 +18,7 @@ import re
 
 import frappe
 from frappe import _
-from frappe.utils import flt, getdate
+from frappe.utils import cint, flt, getdate
 
 
 # Sales Order Item 允许的字段（从 ERPNext 子表映射）
@@ -129,23 +129,79 @@ def _to_sales_order_item(row):
     return out
 
 
-def _get_default_warehouse(company):
-    """获取公司的默认仓库（非组仓库）。"""
+def _warehouse_usable_for_company(warehouse, company):
+    """仓库存在、非组、未禁用，且所属公司与单据公司一致。"""
+    if not warehouse or not company:
+        return False
+    row = frappe.db.get_value(
+        "Warehouse",
+        warehouse,
+        ["disabled", "company", "is_group"],
+        as_dict=True,
+    )
+    if not row or row.is_group or cint(row.disabled):
+        return False
+    return (row.company or "") == company
+
+
+def _get_any_usable_warehouse(company):
+    """最后兜底：该公司下任意可用（非组、未禁用）仓库，按名称稳定排序。"""
     wh = frappe.get_all(
         "Warehouse",
-        filters={"company": company, "is_group": 0},
+        filters={"company": company, "is_group": 0, "disabled": 0},
         fields=["name"],
+        order_by="name asc",
         limit=1,
     )
     return wh[0].name if wh else None
 
 
-def _prepare_order_doc(order_data, default_warehouse):
+def _resolve_warehouse_for_line(item_code, company):
+    """
+    未传 warehouse 时的解析顺序（与界面从 Item Defaults 带出一致）：
+    1) Item 在公司下的 default_warehouse（tabItem Default）
+    2) 全局 Stock Settings.default_warehouse（须属于该公司且未禁用）
+    3) 该公司任意可用仓库
+
+    注意：旧实现用 get_all(..., limit=1) 无排序、未过滤 disabled，可能落到已禁用仓（如「仓库 - B」）。
+    """
+    from erpnext.stock.doctype.item.item import get_item_defaults
+
+    defaults = get_item_defaults(item_code, company) or {}
+    wh = defaults.get("default_warehouse")
+    if wh and _warehouse_usable_for_company(wh, company):
+        return wh
+
+    wh = frappe.db.get_single_value("Stock Settings", "default_warehouse")
+    if wh and _warehouse_usable_for_company(wh, company):
+        return wh
+
+    return _get_any_usable_warehouse(company)
+
+
+def _prepare_order_doc(order_data):
     """将 order_data 转为可传入 frappe.get_doc 的字典。"""
+    company = order_data.get("company")
+
+    # items（先解析行仓库，便于 set_warehouse 与明细一致）
+    items = []
+    first_resolved_wh = None
+    for row in order_data.get("items") or []:
+        so_item = _to_sales_order_item(row)
+        if not so_item.get("item_code"):
+            continue
+        if not so_item.get("warehouse"):
+            wh = _resolve_warehouse_for_line(so_item["item_code"], company)
+            if wh:
+                so_item["warehouse"] = wh
+                if not first_resolved_wh:
+                    first_resolved_wh = wh
+        items.append(so_item)
+
     doc = {
         "doctype": "Sales Order",
         "customer": order_data.get("customer"),
-        "company": order_data.get("company"),
+        "company": company,
         "order_type": order_data.get("order_type") or "Sales",
         "transaction_date": order_data.get("transaction_date"),
         "delivery_date": order_data.get("delivery_date"),
@@ -157,7 +213,7 @@ def _prepare_order_doc(order_data, default_warehouse):
         "selling_price_list": order_data.get("selling_price_list") or "标准销售",
         "price_list_currency": order_data.get("price_list_currency") or "CNY",
         "plc_conversion_rate": flt(order_data.get("plc_conversion_rate"), 1) or 1,
-        "set_warehouse": default_warehouse or order_data.get("set_warehouse") or "",
+        "set_warehouse": order_data.get("set_warehouse") or first_resolved_wh or "",
     }
 
     # 自定义字段（若 DocType 存在）
@@ -165,15 +221,6 @@ def _prepare_order_doc(order_data, default_warehouse):
         if order_data.get(f) is not None:
             doc[f] = order_data[f]
 
-    # items
-    items = []
-    for row in order_data.get("items") or []:
-        so_item = _to_sales_order_item(row)
-        if not so_item.get("item_code"):
-            continue
-        if default_warehouse and not so_item.get("warehouse"):
-            so_item["warehouse"] = default_warehouse
-        items.append(so_item)
     doc["items"] = items
 
     # taxes
@@ -228,10 +275,7 @@ def save_sales_order(order_data=None, *args, **kwargs):
         if err:
             return err
 
-        company = order_data.get("company")
-        default_warehouse = _get_default_warehouse(company)
-
-        doc_dict = _prepare_order_doc(order_data, default_warehouse)
+        doc_dict = _prepare_order_doc(order_data)
 
         is_update = bool(order_data.get("name") and frappe.db.exists("Sales Order", order_data["name"]))
 
