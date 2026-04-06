@@ -309,7 +309,9 @@ def _build_items(flat_nodes, item_details_cache, finished_product_wh=None):
         item_name = (node.get("item_name") or "").strip() or item_code
         details = item_details_cache.get(item_code, {})
 
-        warehouse = (node.get("warehouse") or "").strip() or details.get("warehouse", "")
+        warehouse = (node.get("warehouse") or "").strip() or (
+            details.get("default_warehouse_link") or ""
+        ).strip()
         warehouse_name = _get_warehouse_name(warehouse) if warehouse else ""
         supplier = (node.get("supplier") or "").strip() or details.get("supplier", "")
         supplier_name = _get_supplier_name(supplier) if supplier else ""

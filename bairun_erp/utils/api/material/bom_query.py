@@ -172,9 +172,9 @@ def _resolve_bom_item_process(operation, item_details):
 
 def _get_item_tree_fields(item_codes):
     """
-    批量获取 Item 的 item_group、stock_uom、默认仓库（与 update_item_properties_by_item_code 同一数据源：
-    Item Default 子表 default_warehouse，再转为画布展示名）、default_supplier。
-    返回 dict: item_code -> {item_group, stock_uom, warehouse, supplier}
+    批量获取 Item 的 item_group、stock_uom、默认仓库、default_supplier。
+    - warehouse: Item Default 经 item_default_wh_to_canvas_display 后的画布展示名（仅 MindMap 等 UI）
+    - default_warehouse_link: Item Default 中的 default_warehouse 原始值（tabWarehouse.name），供展开/接口落库
     """
     if not item_codes:
         return {}
@@ -216,10 +216,12 @@ def _get_item_tree_fields(item_codes):
             continue
         wh_main = (r.get("default_warehouse") or "").strip() if "default_warehouse" in fields else ""
         internal_wh = internal_wh_by_item.get(ic) or wh_main
+        internal_wh = (internal_wh or "").strip()
         result[ic] = {
             "item_group": (r.get("item_group") or "").strip(),
             "stock_uom": (r.get("stock_uom") or "").strip() or "Nos",
             "warehouse": item_default_wh_to_canvas_display(internal_wh, company),
+            "default_warehouse_link": internal_wh,
             "supplier": (r.get("default_supplier") or "").strip(),
             "description": (r.get("description") or "").strip() if r.get("description") else "",
         }
@@ -230,6 +232,7 @@ def _get_item_tree_fields(item_codes):
                 "item_group": "",
                 "stock_uom": "Nos",
                 "warehouse": "",
+                "default_warehouse_link": "",
                 "supplier": "",
                 "description": "",
             }
@@ -254,8 +257,8 @@ def _bom_item_to_tree_node(bi, bom_doc, item_details, parent_bom_qty=1):
     details = item_details.get(item_code, {})
     bom_qty = float(bi.stock_qty or bi.qty or 0) / float(parent_bom_qty or 1)
 
-    # 主档默认仓优先（与「更新当前物料」一致）；无则回落到 BOM 行上的 source_warehouse
-    warehouse = (details.get("warehouse") or "").strip() or (
+    # 主档 Item Default 的仓库 Link；无则用 BOM Item.source_warehouse（均为 tabWarehouse.name）。不用 warehouse 画布展示名。
+    warehouse = (details.get("default_warehouse_link") or "").strip() or (
         getattr(bi, "source_warehouse", None) or ""
     ).strip()
     process = _resolve_bom_item_process(getattr(bi, "operation", None), details)
@@ -331,8 +334,9 @@ def _build_bom_tree(bom_name, item_details_cache=None):
         root["item_name"] = frappe.db.get_value("Item", root_item_code, "item_name") or root_item_code
     if details.get("stock_uom"):
         root["stock_uom"] = details["stock_uom"]
-    if details.get("warehouse"):
-        root["warehouse"] = details["warehouse"]
+    wh_link = (details.get("default_warehouse_link") or "").strip()
+    if wh_link:
+        root["warehouse"] = wh_link
     if details.get("supplier"):
         root["supplier"] = details["supplier"]
     if details.get("description"):
