@@ -1140,6 +1140,7 @@ def _detail_row_to_product_bom_api_row(row, row_no, ig_parent_cache):
     est_raw = getattr(row, "estimated_cost", None)
     rec_raw = getattr(row, "received_qty", None)
     unr_raw = getattr(row, "unreceived_qty", None)
+    rqo_raw = getattr(row, "required_qty_override", None)
 
     return {
         "id": getattr(row, "name", None) or "",
@@ -1151,6 +1152,8 @@ def _detail_row_to_product_bom_api_row(row, row_no, ig_parent_cache):
         "item_group": item_group,
         "item_group_parent": ig_parent_cache.get(item_group, "") if item_group else "",
         "ratioQty": flt(getattr(row, "ratio_qty", None)),
+        "requiredQtyOverride": flt(rqo_raw) if rqo_raw is not None else None,
+        "required_qty_override": flt(rqo_raw) if rqo_raw is not None else None,
         "inventoryQty": flt(inv_raw) if inv_raw is not None else None,
         "estimatedCost": flt(est_raw) if est_raw is not None else None,
         "lossRatio": flt(loss_raw) if loss_raw is not None else None,
