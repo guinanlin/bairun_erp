@@ -1,6 +1,6 @@
 # Copyright (c) 2025, Bairun and contributors
 # 毛坯/半成品列表接口：待委外列表、已委外列表。
-# 毛坯：到库=入毛坯仓 SE+PR；委外=毛坯仓→半成品仓。
+# 毛坯：到库=入毛坯仓 SE+PR；委外=毛坯→半成品 Material Transfer，或 MES 发料 Material Issue（明细关联 MR）。
 # 半成品：到库=入半成品仓（Material Transfer 毛坯→半成品，或 Material Receipt 入半成品仓，如毛坯委外编排回库 SE）；委外=半成品仓→成品仓。
 # 调拨单（Stock Entry）列表汇总含草稿(docstatus=0)与已提交(1)，不含已取消(2)。
 # 接口路径：bairun_erp.utils.api.stock.blank_list
@@ -201,16 +201,47 @@ def _get_received_by_key(list_type=LIST_TYPE_BLANK):
 	return agg
 
 
+def _merge_outsourced_se_detail_rows(agg, rows, has_outsourcing_supplier, default_wh):
+	"""将 Stock Entry 明细行累计进委外聚合（与 Material Transfer 分支同一套 key）。"""
+	for r in rows or []:
+		project_no = (r.get("project_no") or "").strip()
+		warehouse = r.get("warehouse") or default_wh
+		key = (project_no, r.get("item_code"), warehouse)
+		if key not in agg:
+			agg[key] = {
+				"outsourcing_qty": 0,
+				"outsourcing_details": [],
+				"supplier_id": None,
+				"supplier_name": None,
+			}
+		qty = _flt(r.get("qty"))
+		agg[key]["outsourcing_qty"] += qty
+		agg[key]["outsourcing_details"].append({
+			"date": _date_str(r.get("posting_date")),
+			"docNo": r.get("se_name"),
+			"qty": qty,
+		})
+		if has_outsourcing_supplier and r.get("supplier_id"):
+			agg[key]["supplier_id"] = r.get("supplier_id")
+			if not agg[key]["supplier_name"]:
+				agg[key]["supplier_name"] = frappe.db.get_value(
+					"Supplier", r.get("supplier_id"), "supplier_name"
+				) or r.get("supplier_id")
+
+
 def _get_outsourced_by_key(list_type=LIST_TYPE_BLANK):
 	"""
 	委外数/委外明细。
-	- blank: Material Transfer 毛坯仓→半成品仓，key 的 warehouse = 毛坯仓。
+	- blank: ① Material Transfer 毛坯仓→半成品仓；② Material Issue 毛坯仓发料且明细关联 Material Request
+	 （与 submit_blank_outsourcing 发料 SE 对齐）。key 的 warehouse = 毛坯仓（发料来源仓）。
 	- semi_finished: Material Transfer 半成品仓→成品仓，key 的 warehouse = 半成品仓。
 	返回: dict key (project_no, item_code, warehouse) -> { "outsourcing_qty", "outsourcing_details", "supplier_id", "supplier_name" }
 	"""
 	se_meta = frappe.get_meta("Stock Entry")
+	sed_meta = frappe.get_meta("Stock Entry Detail")
 	has_customer_order = bool(se_meta.get_field("custom_customer_order"))
 	has_outsourcing_supplier = bool(se_meta.get_field("custom_outsourcing_supplier"))
+	has_sed_material_request = bool(sed_meta.get_field("material_request"))
 
 	select = [
 		"sed.s_warehouse AS warehouse",
@@ -235,38 +266,31 @@ def _get_outsourced_by_key(list_type=LIST_TYPE_BLANK):
 		s_wh, t_wh = BLANK_WAREHOUSE, SEMI_FINISHED_WAREHOUSE
 		default_wh = BLANK_WAREHOUSE
 
-	sql = """
+	select_sql = ", ".join(select)
+	sql_mt = """
 		SELECT {}
 		FROM `tabStock Entry Detail` sed
 		INNER JOIN `tabStock Entry` se ON se.name = sed.parent AND {}
 		WHERE se.purpose = 'Material Transfer'
 		  AND sed.s_warehouse = %s AND sed.t_warehouse = %s
-	""".format(", ".join(select), _STE_DOCSTATUS_FOR_LIST_SQL)
-	rows = frappe.db.sql(sql, (s_wh, t_wh), as_dict=True)
+	""".format(select_sql, _STE_DOCSTATUS_FOR_LIST_SQL)
+	rows_mt = frappe.db.sql(sql_mt, (s_wh, t_wh), as_dict=True)
 
 	agg = {}
-	for r in rows:
-		project_no = (r.get("project_no") or "").strip()
-		warehouse = r.get("warehouse") or default_wh
-		key = (project_no, r.get("item_code"), warehouse)
-		if key not in agg:
-			agg[key] = {
-				"outsourcing_qty": 0,
-				"outsourcing_details": [],
-				"supplier_id": None,
-				"supplier_name": None,
-			}
-		qty = _flt(r.get("qty"))
-		agg[key]["outsourcing_qty"] += qty
-		agg[key]["outsourcing_details"].append({
-			"date": _date_str(r.get("posting_date")),
-			"docNo": r.get("se_name"),
-			"qty": qty,
-		})
-		if has_outsourcing_supplier and r.get("supplier_id"):
-			agg[key]["supplier_id"] = r.get("supplier_id")
-			if not agg[key]["supplier_name"]:
-				agg[key]["supplier_name"] = frappe.db.get_value("Supplier", r.get("supplier_id"), "supplier_name") or r.get("supplier_id")
+	_merge_outsourced_se_detail_rows(agg, rows_mt, has_outsourcing_supplier, default_wh)
+
+	# 毛坯：MES 白名单委外编排产生的是 Material Issue + 明细 material_request，需计入委外数以扣减待委外余量
+	if list_type == LIST_TYPE_BLANK and has_sed_material_request:
+		sql_issue = """
+			SELECT {}
+			FROM `tabStock Entry Detail` sed
+			INNER JOIN `tabStock Entry` se ON se.name = sed.parent AND {}
+			WHERE se.purpose = 'Material Issue'
+			  AND IFNULL(sed.material_request, '') != ''
+			  AND sed.s_warehouse = %s
+		""".format(select_sql, _STE_DOCSTATUS_FOR_LIST_SQL)
+		rows_issue = frappe.db.sql(sql_issue, (BLANK_WAREHOUSE,), as_dict=True)
+		_merge_outsourced_se_detail_rows(agg, rows_issue, has_outsourcing_supplier, default_wh)
 
 	for key, v in agg.items():
 		if v["supplier_name"] is None and v["supplier_id"]:
